@@ -11,7 +11,7 @@
 
 ## 2. APK 파일 위치
 
-- `apk/{{TEAM}}_Hyundiary_release.apk` (release 빌드, APK Signature Scheme v2·v3 서명)
+- `apk/건한_Hyundiary_release.apk` (release 빌드, APK Signature Scheme v2·v3 서명)
 
 ## 3. 실행 방법
 
@@ -20,7 +20,7 @@
 Pleos Connect 에뮬레이터를 완전히 부팅한 뒤 다음을 실행합니다.
 
 ```bash
-adb install -r apk/{{TEAM}}_Hyundiary_release.apk
+adb install -r apk/건한_Hyundiary_release.apk
 adb shell am start --user 10 -n com.hyundiary.mockup/.MainActivity
 ```
 
