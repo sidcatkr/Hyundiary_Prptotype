@@ -9,6 +9,7 @@ android/local.properties
 android/.idea/
 android/captures/
 *.iml
+android/keystore.properties
 *.keystore
 *.jks
 

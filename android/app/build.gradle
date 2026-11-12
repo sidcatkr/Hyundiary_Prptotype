@@ -2,6 +2,18 @@ plugins {
     id 'com.android.application'
 }
 
+// release 서명 정보는 저장소에 넣지 않는다. android/keystore.properties(.gitignore 대상)에서 읽는다.
+//   storeFile=/절대/경로/hyundiary-release.jks
+//   storePassword=...
+//   keyAlias=hyundiary
+//   keyPassword=...
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def hasReleaseKey = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].every { keystoreProps.getProperty(it) }
+
 android {
     namespace 'com.hyundiary.mockup'
     compileSdk 35
@@ -11,7 +23,21 @@ android {
         minSdk 28          // Pleos 제품 앱 기준(서명키 rotation)
         targetSdk 35
         versionCode 1
-        versionName '0.1.0-mockup'
+        versionName '1.0.0'
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                storeFile file(keystoreProps.getProperty('storeFile'))
+                storePassword keystoreProps.getProperty('storePassword')
+                keyAlias keystoreProps.getProperty('keyAlias')
+                keyPassword keystoreProps.getProperty('keyPassword')
+                // minSdk 28: v2·v3 서명(v3는 서명키 rotation 지원)
+                enableV2Signing true
+                enableV3Signing true
+            }
+        }
     }
 
     sourceSets {
@@ -25,7 +51,12 @@ android {
     buildTypes {
         release {
             minifyEnabled false
+            debuggable false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // 키가 없으면 서명 안 된 APK(app-release-unsigned.apk)가 나온다
+            if (hasReleaseKey) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
