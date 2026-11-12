@@ -1,0 +1,18 @@
+{
+  "name": "hyundiary-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hyundiary 차계부 목업: 브라우저 프리뷰와 Pleos 에뮬레이터용 WebView 앱",
+  "type": "module",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "build": "node tools/build-single.mjs",
+    "test": "node tools/smoke-test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

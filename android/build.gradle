@@ -1,0 +1,4 @@
+// Pleos 샘플 앱과 같은 툴체인: AGP 8.8.2 / Gradle 8.10.2 / JDK 17
+plugins {
+    id 'com.android.application' version '8.8.2' apply false
+}

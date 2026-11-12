@@ -1,0 +1,36 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.hyundiary.mockup'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.hyundiary.mockup'
+        minSdk 28          // Pleos 제품 앱 기준(서명키 rotation)
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0-mockup'
+    }
+
+    sourceSets {
+        main {
+            // 웹 목업(저장소 루트의 web/)을 복사 없이 그대로 assets로 묶는다.
+            // 앱은 assets의 app.html을 연다.
+            assets.srcDirs = ['src/main/assets', '../../web']
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

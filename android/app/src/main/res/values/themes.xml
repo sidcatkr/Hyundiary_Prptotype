@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pleos OS 라이트 화면에 맞춘 흰 바탕. 첫 화면이 그려지기 전 깜빡임을 줄인다. -->
+    <style name="Theme.Hyundiary" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:colorAccent">@color/ink</item>
+    </style>
+</resources>
