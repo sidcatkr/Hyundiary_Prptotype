@@ -106,6 +106,46 @@ try {
   await cstage.getByRole('button', { name: '기록', exact: true }).click();
   await car.waitForTimeout(900);
   check((await text()).includes('서울 서초구 서초대로'), '감지한 주유가 가계부에 기록되지 않음');
+  // 주행 종료 팝업은 실제 주행 값을 보여 준다(시연 숫자 아님)
+  await emit({ type: 'trip', phase: 'start' });
+  await car.waitForTimeout(500);
+  await emit({ type: 'trip', phase: 'end', trip: { km: 2.0, sec: 300, maxKmh: 55, events: { decel: 1, speeding: 0, lane: 0, belt: 0 } } });
+  await car.waitForTimeout(900);
+  check((await text()).includes('이번 주행에서 2.0 km를 5분'), '차량 모드 주행 종료 팝업에 실제 거리·시간이 없음');
+  check((await text()).includes('급감속 1') && !(await text()).includes('양재동'), '차량 모드 주행 종료 팝업에 시연 값이 섞임');
+  await cstage.getByRole('button', { name: '닫기', exact: true }).click();
+  await car.waitForTimeout(500);
+  // 기어만 바꾸고 움직이지 않았으면 주행 종료 팝업을 띄우지 않는다
+  await emit({ type: 'trip', phase: 'start' });
+  await car.waitForTimeout(500);
+  await emit({ type: 'trip', phase: 'end', trip: { km: 0, sec: 50, maxKmh: 0, events: { decel: 0, speeding: 0, lane: 0, belt: 0 } } });
+  await car.waitForTimeout(700);
+  check((await car.locator('.scrim').count()) === 0, '움직이지 않은 주행에 종료 팝업이 뜸');
+  // 전기차 충전: 정차 중 팝업 → D로 바꿔도 사라지지 않고 정차 뒤 다시 뜸 → 기록하면 실제 값이 가계부·홈에 남음
+  await car.locator('.dock-fab').click();
+  await car.waitForTimeout(300);
+  await car.getByRole('button', { name: '전기차로 전환' }).click();
+  await car.waitForTimeout(700);
+  await emit({ type: 'snapshot', data: { evSoc: 85, speedKmh: 0, gear: 'P', odoKm: 0, route: { active: false } } });
+  await car.waitForTimeout(400);
+  check((await text()).includes('누적 주행거리') && (await text()).includes('0 km') && !(await text()).includes('18,240 km'), '차량 모드 전기차 홈에 실제 누적 주행거리가 보이지 않음');
+  await emit({ type: 'charge', fromPct: 60, toPct: 85, kwh: 19.4, at: Date.now() });
+  await car.waitForTimeout(700);
+  check((await text()).includes('19.4 kWh'), '감지한 충전 팝업이 뜨지 않음');
+  await emit({ type: 'trip', phase: 'start' });
+  await car.waitForTimeout(700);
+  check((await text()).includes('경로 안내 없이') && (await text()).includes('충전비') && !(await text()).includes('48.'), '차량 모드 전기차 주행 화면에 실제 값이 아닌 문구가 보임');
+  await emit({ type: 'trip', phase: 'end', trip: { km: 0, sec: 20, maxKmh: 0, events: { decel: 0, speeding: 0, lane: 0, belt: 0 } } });
+  await car.waitForTimeout(900);
+  check((await text()).includes('19.4 kWh'), 'D로 바꾼 뒤 대기하던 충전 팝업이 정차 후 다시 뜨지 않음');
+  check(!(await text()).includes('28.4 kWh'), '기록하지 않은 충전이 홈에 자동 기록으로 보임');
+  await cstage.getByRole('button', { name: '기록', exact: true }).click();
+  await car.waitForTimeout(900);
+  check((await text()).includes('19.4 kWh · 자동 기록') && (await text()).includes('6,730원'), '기록한 충전이 실제 값으로 홈에 보이지 않음');
+  await car.locator('.dock-fab').click();
+  await car.waitForTimeout(300);
+  await car.getByRole('button', { name: '내연기관차로 전환' }).click();
+  await car.waitForTimeout(500);
   // 시연 모드여도 주행 규제가 켜지면 주행 화면으로 바뀌고, 꺼지면 돌아온다
   await cstage.locator('.menu-item', { hasText: '설정' }).first().click();
   await car.waitForTimeout(500);

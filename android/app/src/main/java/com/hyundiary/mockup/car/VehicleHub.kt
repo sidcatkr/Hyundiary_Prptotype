@@ -27,7 +27,6 @@ import org.json.JSONObject
  *  charge    정차 중 배터리 증가 → 충전량(kWh)
  *  safety    안전 운전 기록 1건(decel/speeding/lane/belt)
  *  fuelLow   주행 중 주유가 필요해짐(주행가능거리 < 남은 경로 + 여유)
- *  telltales 켜진 경고등 목록
  *  waypoint  경유지 추가 결과
  */
 class VehicleHub(context: Context, private val sink: EventSink) :
@@ -188,7 +187,6 @@ class VehicleHub(context: Context, private val sink: EventSink) :
             "turn" -> safety.onTurnSignal(t, state.turnSignal != null && state.turnSignal != "OFF")
             "steer" -> state.steerDeg?.let { deg -> if (trips.active) safety.onSteering(t, deg)?.let { emitSafety(it) } }
             "belt" -> state.driverBelt?.let { b -> safety.onBelt(t, b)?.let { if (trips.active) emitSafety(it) } }
-            "telltales" -> emit(JSONObject().put("type", "telltales").put("items", org.json.JSONArray(state.telltales)))
         }
     }
 
@@ -249,7 +247,6 @@ class VehicleHub(context: Context, private val sink: EventSink) :
             charge.onDriveStart(t)?.let { emitCharge(it) }
         }
         handleTrip(trips.onGear(t, g))
-        if (g == Gear.P) vehicle.refreshTelltales()
         // 정차 상태가 바뀌었으니 연료 기준을 새로 잡게 한다
         state.fuelPct?.let { refuel.onLevel(t, it, state.parked) }
         state.evSocPct?.let { charge.onLevel(t, it, state.parked) }
@@ -275,7 +272,6 @@ class VehicleHub(context: Context, private val sink: EventSink) :
             }
             is TripTracker.Event.Ended -> {
                 emit(JSONObject().put("type", "trip").put("phase", "end").put("trip", tripJson(ev.trip)))
-                vehicle.refreshTelltales()
             }
             null -> Unit
         }

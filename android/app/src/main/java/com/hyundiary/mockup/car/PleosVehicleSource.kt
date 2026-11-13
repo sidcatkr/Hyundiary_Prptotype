@@ -22,10 +22,12 @@ import android.util.Log
  * - TurnSignal                  → 깜빡이 없이 차로 변경 판단 (pleos CAR_LIGHTS)
  * - SteeringWheel angle         → 차로 변경 추정 (pleos CAR_DRIVE)
  * - Seat belt (운전석 ROW_1_LEFT) → 안전벨트 미착용 주행 (pleos CAR_SEATS)
- * - Safety telltales            → 켜진 경고등(와셔액 등) (pleos CAR_SAFETY)
  *
+ * 경고등(Safety Telltales)은 쓰지 않는다. 에뮬레이터 실측에서 CAR_SAFETY만으로는 조회가 거부되고
+ * (PRIVATE_CAR_SAFETY 필요), SDK의 경고등 종류에 와셔액이 없어 소모품 화면에 쓸 수 없었다.
  * 연료 %는 이 SDK의 Fuel이 에뮬레이터에서 값을 주지 않아 AAOS Car API(FUEL_LEVEL)로 받는다([CarApiSource]).
  * SDK는 binder 오류 때 onComplete·onFailed를 모두 부르지 않을 수 있어 조회마다 타임아웃을 둔다.
+ * 에뮬레이터에서 첫 조회는 서비스 연결 때문에 3초를 넘기기도 해서 타임아웃을 8초로 둔다.
  * SDK 콜백은 어느 스레드에서 올지 모르므로 모두 메인 스레드로 옮겨 처리한다.
  */
 class PleosVehicleSource(
@@ -154,30 +156,6 @@ class PleosVehicleSource(
                 seat.getCurrentSeatBeltBuckledState(driverSeat, { x -> onMain { done(); if (x != null) { state.driverBelt = x; listener.onVehicleChanged("belt") } } }, { e -> onMain { failed(e) } })
             }
         }
-        refreshTelltales()
-    }
-
-    /**
-     * 켜진 경고등을 다시 읽는다. 구독(registerTelltales)은 PRIVATE_CAR_SAFETY 권한이 필요해서
-     * 쓰지 않고, 정차할 때마다 조회한다.
-     */
-    fun refreshTelltales() {
-        val v = vehicle ?: return
-        guard("telltales") {
-            val safety = v.getSafety()
-            watch("telltales") { done, failed ->
-                safety.getTelltalesInfo({ info ->
-                    onMain {
-                        done()
-                        val on = info?.telltales.orEmpty()
-                            .filter { it.state.name != "OFF" }
-                            .map { it.type.name }
-                        state.telltales = on
-                        listener.onVehicleChanged("telltales")
-                    }
-                }, { e -> onMain { failed(e) } })
-            }
-        }
     }
 
     fun stop() {
@@ -276,6 +254,6 @@ class PleosVehicleSource(
 
     companion object {
         private const val TAG = "HyVehicle"
-        private const val TIMEOUT_MS = 3_000L
+        private const val TIMEOUT_MS = 8_000L
     }
 }

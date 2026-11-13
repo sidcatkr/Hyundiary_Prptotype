@@ -1,7 +1,6 @@
 package com.hyundiary.mockup.car
 
 import com.hyundiary.mockup.logic.Gear
-import org.json.JSONArray
 import org.json.JSONObject
 
 /** 연동 대상 하나(AAOS Car API, Pleos Vehicle SDK, NaviHelper, TTS, FusedLocation)의 연결 상태. */
@@ -34,7 +33,6 @@ class VehicleState {
     var turnSignal: String? = null       // TurnSignal OFF / LEFT / RIGHT
     var steerDeg: Float? = null          // SteeringWheel angle (도)
     var driverBelt: Boolean? = null      // Seat ROW_1_LEFT belt buckled
-    var telltales: List<String> = emptyList() // Safety 켜진 경고등 이름
 
     // Pleos NaviHelper
     var naviStatus: String? = null       // NavigationStatus
@@ -92,12 +90,11 @@ class VehicleState {
         putOpt("evCapKwh", evCapWh?.let { round1(it / 1000f) })
         putOpt("speedKmh", speedKmh?.let { round1(it) })
         put("gear", gear.label)
-        putOpt("odoKm", odoKm?.takeIf { it > 0f }?.let { round1(it) })
+        putOpt("odoKm", odoKm?.takeIf { it >= 0f }?.let { round1(it) })
         putOpt("turn", turnSignal)
         putOpt("steerDeg", steerDeg?.let { round1(it) })
         putOpt("belt", driverBelt)
         put("restricted", restricted == true)
-        put("telltales", JSONArray(telltales))
         putOpt("speedLimit", speedLimitKmh)
         put("route", JSONObject().apply {
             put("active", routeActive)

@@ -102,7 +102,7 @@ const KIND_NAME = { decel: '급감속', speeding: '제한속도 초과', lane: '
 // 설정 > 연결: 연동 대상과 상태 표기
 const SRC_ROWS = [
   ['car', '차량 데이터', 'AAOS Car API · 연료, 차속, 기어, 주행 규제'],
-  ['vehicle', 'Pleos Vehicle SDK', '주행거리, 배터리, 깜빡이, 핸들, 안전벨트, 경고등'],
+  ['vehicle', 'Pleos Vehicle SDK', '주행거리, 배터리, 깜빡이, 핸들, 안전벨트'],
   ['navi', '내비게이션', 'Pleos NaviHelper · 목적지, 제한속도, 경유지'],
   ['voice', '음성 안내', 'Pleos TextToSpeech'],
   ['location', '위치', 'Pleos FusedLocation'],
@@ -111,6 +111,11 @@ const SRC_TXT = { ok: '연결됨', connecting: '연결 중', denied: '권한 필
 // 유가 API는 아직 연동 전이라 차량 데이터 모드에서도 주유 단가·충전 단가는 예시 값을 쓴다
 const LIVE_PRICE = 1689;
 const LIVE_KWH_PRICE = 347;
+const EV_EFF = 5.8; // 전기차 11월 평균 전비(km/kWh)
+// 이번 주행 비용(차량 데이터 모드): 내연기관은 연비 × 휘발유 단가, 전기차는 전비 × 충전 단가
+const tripCost = (S, km) => (S.ev
+  ? { name: '충전비', basis: '전비 ' + EV_EFF + ' km/kWh · ' + LIVE_KWH_PRICE + '원/kWh', won: Math.round(((km / EV_EFF) * LIVE_KWH_PRICE) / 10) * 10 }
+  : { name: '연료비', basis: '연비 ' + EFF30 + ' km/L · ' + won(LIVE_PRICE) + '원/L', won: Math.round(((km / EFF30) * LIVE_PRICE) / 10) * 10 });
 const HV = window.HyVehicle || null; // src/native.js
 const native = () => !!(HV && HV.available);
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -257,6 +262,19 @@ const destLeft = (S) => {
   if (r && r.remainKm != null) return r.remainKm;
   return S.mode === 'driving' ? Math.max(0, DEST - S.trip.km) : DEST;
 };
+// 누적 주행거리: 차량 데이터 모드는 Odometer 값(아직 못 받았으면 '확인 중')
+const odoText = (S, demo) => (carOn(S) ? (S.car.odoKm != null ? won(S.car.odoKm) + ' km' : '확인 중') : demo);
+// 주유 제안이 필요 없는지. 차량 데이터 모드는 FuelMath.needsFuel과 같은 기준
+// (경로가 있으면 남은 거리 + 50 km, 없으면 100 km, 주행가능거리를 모르면 연료 20%)
+const fuelOk = (S) => {
+  if (!carOn(S) || S.ev) return tank(S);
+  const c = S.car;
+  const r = routeOf(S);
+  if (c.rangeKm != null && c.rangeKm >= 0) return r && r.remainKm > 0 ? c.rangeKm >= r.remainKm + 50 : c.rangeKm >= 100;
+  return !(c.fuelPct != null && c.fuelPct < 20);
+};
+// 홈 안내 문구의 목적지 부분. 차량 데이터 모드에서 경로가 없으면 뺀다
+const destPart = (S) => (carOn(S) && !routeOf(S) ? '' : destName(S) + '까지 ' + Math.round(destLeft(S)) + ' km · ');
 const needL = (S) => (tank(S) ? 30 : 33.6);
 const ranked = (S) => STATIONS.map((s) => ({ ...s, ...saving(s.price, s.detour, needL(S)) })).sort((a, b) => b.net - a.net);
 const novPrice = (S) => Math.round(fuelSum(S) / Math.max(1, fuelL(S)));
@@ -471,12 +489,12 @@ function Home({ S, A }) {
   const last = S.ledger.find((r) => r.fuel);
   const best = ranked(S)[0];
   const n = recRows(S).length;
-  const hint = tank(S)
+  const hint = fuelOk(S)
     ? html`<div className="hint quiet" role="note"><${Icon} name="check" size=${30} /><div className="hint-m"><div className="hint-t">지금은 넣지 않아도 됩니다</div>
-        <div className="hint-s">${destName(S)}까지 ${Math.round(destLeft(S))} km · ${range(S)} km 주행 가능 <${Src} list=${['차량', '내비게이션']} /></div></div></div>`
+        <div className="hint-s">${destPart(S)}${range(S)} km 주행 가능 <${Src} list=${['차량', '내비게이션']} /></div></div></div>`
     : html`<button type="button" className="hint" onClick=${() => A.go('stations', { dir: 'fade' })}><${Icon} name="fuel" size=${30} />
         <div className="hint-m"><div className="hint-t">가는 길에 <b>${best.name}</b>에서 넣으면 <b>${won(best.net)}원</b> 아낍니다</div>
-        <div className="hint-s">${destName(S)}까지 ${Math.round(destLeft(S))} km · ${range(S)} km 주행 가능 · 우회 ${best.detour.toFixed(1)} km <${Src} list=${['차량', '내비게이션', '오피넷']} /></div></div>
+        <div className="hint-s">${destPart(S)}${range(S)} km 주행 가능 · 우회 ${best.detour.toFixed(1)} km <${Src} list=${['차량', '내비게이션', '오피넷']} /></div></div>
         <${Icon} name="chevron-right" size=${28} className="row-chev" /></button>`;
   return html`<div className="pg home">
     <${Head} title="홈" sub="11월 9일 일요일 · 정차 중" right=${html`<${Btn} v="outline" icon="search" onClick=${() => A.go('stations', { dir: 'fade' })}>주유소 찾기<//><${Btn} v="outline" icon="plus" onClick=${() => A.newEntry('주차')}>기록 추가<//>`} />
@@ -485,7 +503,7 @@ function Home({ S, A }) {
         <${H2} first>차량<//>
         <${Row} title="연료" detail=${'주행가능거리 ' + range(S) + ' km'} value=${html`<${Num} v=${fuel} suf="%" />`} src=${['차량']} icon="fuel" tone=${fuel < 20 ? 'neg' : ''} />
         <${Meter} v=${fuel} label="연료" />
-        <${Row} title="누적 주행거리" value=${carOn(S) && S.car.odoKm ? won(S.car.odoKm) + ' km' : '42,480 km'} icon="gauge" dense />
+        <${Row} title="누적 주행거리" value=${odoText(S, '42,480 km')} icon="gauge" dense />
         <${Row} title="11월 평균 연비" value="12.4 km/L" icon="chart" dense />
         <${H2}>11월 지출<//>
         <${Row} title="합계" detail=${S.ledger.length + '건 · 1km당 ' + won(total(S) / KM_NOV) + '원'} value=${html`<${Num} v=${total(S)} suf="원" />`} icon="ledger" chevron dense onClick=${() => A.go('ledger', { dir: 'fade' })} />
@@ -501,7 +519,7 @@ function Home({ S, A }) {
         <${Row} title="지난달 대비" detail="같은 기간 쓴 연료비" value="+12%" tone="neg" src=${['차량']} icon="chart" chevron dense onClick=${() => A.go('stats', { dir: 'fade' })} />
         <${Row} title="누적 절감액" detail=${'추천 주유 ' + n + '회'} value=${html`<${Num} v=${savedSum(S)} suf="원" />`} tone="pos" src=${['내 주유 기록']} icon="check" chevron dense onClick=${() => A.go('detail', { arg: last.id, dir: 'fwd' })} />
         <${H2}>확인할 항목<//>
-        ${S.washer ? html`<${Row} title="와셔액" detail="차량 경고 신호" value="보충 필요" tone="neg" icon="drop" chevron dense onClick=${() => A.go('care', { dir: 'fade' })} />` : null}
+        ${S.washer && !carOn(S) ? html`<${Row} title="와셔액" detail="차량 경고 신호" value="보충 필요" tone="neg" icon="drop" chevron dense onClick=${() => A.go('care', { dir: 'fade' })} />` : null}
         <${Row} title="엔진오일" detail="다음 교환까지" value="5,180 km" icon="oil" chevron dense onClick=${() => A.go('care', { dir: 'fade' })} />
       </div>
     </div>
@@ -509,6 +527,12 @@ function Home({ S, A }) {
 }
 function HomeEv({ S, A }) {
   const soc = socPct(S);
+  // 차량 데이터 모드: 가계부에 기록한 실제 충전(시연 합계 2회 31,960원에 더한다)
+  const lives = carOn(S) ? S.ledger.filter((r) => r.charge && r.live) : [];
+  const liveSum = sumOf(lives);
+  const n = carOn(S) ? 2 + lives.length : S.charged ? 3 : 2;
+  const sum = carOn(S) ? 31960 + liveSum : S.charged ? 41820 : 31960;
+  const lastLive = lives[0];
   return html`<div className="pg home">
     <${Head} title="홈" sub="11월 9일 일요일 · 정차 중" right=${html`<${Btn} v="outline" icon="plus" onClick=${() => A.newEntry('주차')}>기록 추가<//>`} />
     <div className="cols">
@@ -516,11 +540,12 @@ function HomeEv({ S, A }) {
         <${H2} first>차량<//>
         <${Row} title="배터리" detail=${'주행가능거리 ' + range(S) + ' km'} value=${html`<${Num} v=${soc} suf="%" />`} src=${['차량']} icon="battery" />
         <${Meter} v=${soc} label="배터리" />
-        <${Row} title="누적 주행거리" value="18,240 km" icon="gauge" dense />
+        <${Row} title="누적 주행거리" value=${odoText(S, '18,240 km')} icon="gauge" dense />
         <${Row} title="11월 평균 전비" value="5.8 km/kWh" icon="chart" dense />
         <${H2}>11월 지출<//>
-        <${Row} title="합계" detail=${'충전 ' + (S.charged ? 3 : 2) + '회 · 1km당 52원'} value=${html`<${Num} v=${S.charged ? 41820 : 31960} suf="원" />`} icon="ledger" chevron dense onClick=${() => A.go('ledger', { dir: 'fade' })} />
-        ${S.charged ? html`<${Row} title="집 완속충전" detail="오늘 07:10 · 28.4 kWh · 자동 기록" value="9,860원" icon="plug" />` : null}
+        <${Row} title="합계" detail=${'충전 ' + n + '회 · 1km당 52원'} value=${html`<${Num} v=${sum} suf="원" />`} icon="ledger" chevron dense onClick=${() => A.go('ledger', { dir: 'fade' })} />
+        ${lastLive ? html`<${Row} title=${lastLive.title} detail=${lastLive.detail} value=${won(lastLive.amount) + '원'} icon="plug" />`
+          : S.charged && !carOn(S) ? html`<${Row} title="집 완속충전" detail="오늘 07:10 · 28.4 kWh · 자동 기록" value="9,860원" icon="plug" />` : null}
       </div>
       <div className="col">
         <${H2} first>확인할 항목<//>
@@ -719,7 +744,7 @@ function Entry({ S, A }) {
     <${Head} title="기록 추가" sub=${fuel ? '자동 기록이 빠진 주유를 직접 넣습니다. 단가는 오피넷 가격으로 채워 두었습니다.' : '분류를 고르면 입력 칸이 바뀝니다.'} back=${['가계부', () => A.go('ledger', { dir: 'back' })]} />
     <div className="field"><span className="lab">분류</span><${Seg} items=${CATS} value=${f.cat} label="분류" onChange=${(c) => A.form({ ...formFor(c), cat: c })} /></div>
     ${fields}
-    <div className="kv" style=${{ borderTop: '1px solid #E0E1E6' }}><span>누적 주행거리</span><span>42,480 km <span className="src" style=${{ marginLeft: '10px' }}>차량에서 자동 입력</span></span></div>
+    <div className="kv" style=${{ borderTop: '1px solid #E0E1E6' }}><span>누적 주행거리</span><span>${odoText(S, '42,480 km')} <span className="src" style=${{ marginLeft: '10px' }}>차량에서 자동 입력</span></span></div>
     <div style=${{ flex: '1 1 auto' }}></div>
     <div className="actions"><${Btn} v="outline" onClick=${() => A.go('ledger', { dir: 'back' })}>취소<//><${Btn} v="primary" onClick=${A.saveEntry}>저장<//></div>
   </div>`;
@@ -996,7 +1021,7 @@ function Trip({ S, A }) {
 
 function Care({ S, A }) {
   return html`<div className="pg">
-    <${Head} title="소모품" sub="누적 주행거리 42,480 km · 차량에서 읽음" right=${html`<${Btn} v="outline" icon="plus" onClick=${() => A.newEntry('정비')}>교체 기록<//>`} />
+    <${Head} title="소모품" sub=${'누적 주행거리 ' + odoText(S, '42,480 km') + ' · 차량에서 읽음'} right=${html`<${Btn} v="outline" icon="plus" onClick=${() => A.newEntry('정비')}>교체 기록<//>`} />
     <div className="cols">
       <div className="col">
         <${H2} first>차량 경고 신호<//>
@@ -1176,6 +1201,19 @@ function PopupLayer({ S, A }) {
     return html`<${Popup} icon="drop" title="와셔액을 보충해 주세요" desc="주행 중에 차량이 보낸 경고입니다. 정차한 뒤에 알려 드립니다."
       actions=${[['확인', 'basic', A.closePopup], ['소모품 보기', 'primary', () => A.go('care', { dir: 'fade' })]]} />`;
   }
+  // 차량 데이터 모드에서 실제 주행이 끝난 경우(kinds는 주행 시작 이벤트 때 생긴다)
+  if (S.popup === 'tripEnd' && S.src === '차량' && S.kinds) {
+    const t = S.trip;
+    const c = tripCost(S, t.km);
+    const k = S.kinds || {};
+    const kinds = KIND_KEYS.filter((x) => k[x]).map((x) => KIND_NAME[x] + ' ' + k[x]);
+    const dur = t.sec < 60 ? Math.round(t.sec) + '초' : Math.round(t.sec / 60) + '분';
+    return html`<${Popup} icon="car" title="주행을 마쳤습니다" desc=${'이번 주행에서 ' + t.km.toFixed(1) + ' km를 ' + dur + ' 동안 달렸습니다.'}
+      actions=${[['닫기', 'primary', A.closePopup]]}>
+      <${Row} title=${c.name} detail=${c.basis + '로 계산'} value=${'약 ' + won(c.won) + '원'} dense />
+      <${Row} title="안전 기록" detail=${kinds.length ? kinds.join(' · ') : '기록 없음'} value=${t.events ? t.events + '건' : '없음'} dense />
+    <//>`;
+  }
   if (S.popup === 'tripEnd') {
     const live = S.trip.km > 0.5;
     const km = live ? S.trip.km : 21.4;
@@ -1275,6 +1313,15 @@ function DrivePanel({ S, A }) {
       <p className="d-note">주행 중에는 기록만 합니다. 자세한 내용은 정차한 뒤에 보여 드립니다.</p>
     </div>`;
   }
+  if (S.drive === 'nonav' && S.src === '차량') {
+    const c = tripCost(S, t.km);
+    return html`<div className="drv-in" style=${{ display: 'contents' }}>
+      <div className="d-l">이번 주행</div>
+      <div className="d-b"><${Num} v=${t.km} d=${1} suf=" km" /></div>
+      <div className="d-s">경로 안내 없이 주행 중</div>
+      <div>${dkv('시간', Math.round(t.sec / 60) + '분')}${dkv(c.name, '약 ' + won(c.won) + '원')}${dkv('안전 기록', t.events ? t.events + '건' : '없음')}</div>
+    </div>`;
+  }
   if (S.drive === 'nonav') {
     const km = 48.2 + t.km;
     return html`<div className="drv-in" style=${{ display: 'contents' }}>
@@ -1284,10 +1331,11 @@ function DrivePanel({ S, A }) {
       <div>${dkv('연비', '12.6 km/L')}${dkv('연료비', '약 ' + won(Math.round(((km / 12.6) * 1692) / 10) * 10) + '원')}${dkv('안전 기록', '없음')}</div>
     </div>`;
   }
+  const lc = S.src === '차량' ? tripCost(S, t.km) : null;
   return html`<div className="drv-in" style=${{ display: 'contents' }}>
     <div className="d-l">이번 주행</div>
-    <div className="d-b"><${Num} v=${cost} suf="원" /></div>
-    <div className="d-s">연료비 · ${EFF30} km/L로 계산</div>
+    <div className="d-b"><${Num} v=${lc ? lc.won : cost} suf="원" /></div>
+    <div className="d-s">${lc ? lc.name + ' · ' + lc.basis + '로 계산' : '연료비 · ' + EFF30 + ' km/L로 계산'}</div>
     <div>${dkv('주행', t.km.toFixed(1) + ' km · ' + Math.round(t.sec / 60) + '분')}${dkv(S.stop ? '경유지까지' : destName(S) + '까지', S.stop ? Math.max(0, 1.6 - t.km).toFixed(1) + ' km' : destLeft(S).toFixed(1) + ' km')}${dkv('안전 기록', t.events ? (S.kinds ? t.events + '건' : '급감속 ' + t.events + '회') : '없음')}</div>
   </div>`;
 }
@@ -1310,6 +1358,15 @@ function liveFuelRow(s) {
   return { id: 'live' + (lv.at || Date.now()), icon: 'fuel', title: lv.address || '주유', when, detail: when + ' · ' + lv.liters + ' L · 자동 기록', amount,
     unit: won(LIVE_PRICE) + '원/L', fuel: true, auto: true, live: true, L: lv.liters, price: LIVE_PRICE, lv: '연료 ' + lv.fromPct + '%에서 ' + lv.toPct + '%로',
     odo: s.car && s.car.odoKm ? Math.round(s.car.odoKm) : null, src: '예시 단가 · 유가 정보 연동 전' };
+}
+function liveChargeRow(s) {
+  const lv = s.live;
+  const when = whenOf(lv.at);
+  const kwh = lv.kwh != null ? lv.kwh : 0;
+  const amount = Math.round((kwh * LIVE_KWH_PRICE) / 10) * 10;
+  return { id: 'live' + (lv.at || Date.now()), icon: 'plug', title: '충전', when, detail: when + ' · ' + kwh + ' kWh · 자동 기록', amount,
+    unit: LIVE_KWH_PRICE + '원/kWh', charge: true, auto: true, live: true, kwh, lv: '배터리 ' + lv.fromPct + '%에서 ' + lv.toPct + '%로',
+    odo: s.car && s.car.odoKm != null ? Math.round(s.car.odoKm) : null };
 }
 const driveView = (s) => (routeOf(s) ? 'route' : 'nonav');
 // 주행 규제(CarUxRestrictions)는 시연·차량 모드와 관계없이 따른다: 켜지면 입력 없는 주행 화면으로 바꾸고 팝업·영상을 닫는다
@@ -1350,20 +1407,26 @@ function vehicleEvent(ev, setS, getS) {
     case 'trip':
       live((s) => {
         if (ev.phase === 'start') {
-          return { ...s, mode: 'driving', forced: false, drive: driveView(s), popup: null, video: 0, stop: false, trip: { km: 0, sec: 0, events: 0 }, kinds: { decel: 0, speeding: 0, lane: 0, belt: 0 }, lastKind: null };
+          // 떠 있던 주유·충전 팝업은 지우지 않고 정차한 뒤에 다시 띄운다
+          const keep = s.popup === 'refuel' || s.popup === 'charge' ? s.popup : s.queued;
+          return { ...s, mode: 'driving', forced: false, drive: driveView(s), popup: null, queued: keep, video: 0, stop: false, trip: { km: 0, sec: 0, events: 0 }, kinds: { decel: 0, speeding: 0, lane: 0, belt: 0 }, lastKind: null };
         }
         const t = ev.trip || {};
         const trip = { km: t.km || 0, sec: t.sec || 0, events: sumCounts(t.events) };
-        if (s.restricted) return { ...s, trip, forced: true, queued: s.queued || 'tripEnd' };
-        return { ...s, mode: 'parked', forced: false, speed: 0, video: 0, page: 'home', dir: 'fade', trip, popup: s.queued || 'tripEnd', queued: null };
+        const kinds = t.events && typeof t.events === 'object' ? t.events : s.kinds;
+        // 기어만 바꾸고 움직이지 않았으면(0.1 km 미만) 주행 종료 팝업을 띄우지 않는다
+        const next = s.queued || (trip.km >= 0.1 ? 'tripEnd' : null);
+        if (s.restricted) return { ...s, trip, kinds, forced: true, queued: next };
+        return { ...s, mode: 'parked', forced: false, speed: 0, video: 0, page: 'home', dir: 'fade', trip, kinds, popup: next, queued: null };
       });
       break;
     case 'refuel':
     case 'charge':
       live((s) => {
         if ((ev.type === 'refuel') === !!s.ev) return s; // 지금 화면 차종과 맞는 것만
+        // 기록 여부는 사용자가 팝업에서 고른다(기록을 누를 때 가계부에 넣는다)
         if (s.mode === 'driving' || s.restricted) return { ...s, live: ev, queued: ev.type };
-        return { ...s, live: ev, popup: ev.type, filled: ev.type === 'refuel' ? true : s.filled, charged: ev.type === 'charge' ? true : s.charged };
+        return { ...s, live: ev, popup: ev.type };
       });
       break;
     case 'safety':
@@ -1378,9 +1441,6 @@ function vehicleEvent(ev, setS, getS) {
       HV.speak('가는 길에 ' + best.name + '에서 주유하면 ' + won(best.net) + '원 아낄 수 있습니다.');
       break;
     }
-    case 'telltales':
-      live((s) => ({ ...s, washer: (ev.items || []).some((x) => /WASHER/.test(String(x))) }));
-      break;
     case 'waypoint':
       if (!ev.ok) setS((s) => ({ ...s, toast: { id: Date.now() + Math.random(), msg: '내비게이션이 경유지를 받지 못했습니다' } }));
       break;
@@ -1429,7 +1489,21 @@ function makeActions(setS, getS) {
         refueled: true, popup: null, page: 'ledger', dir: 'fade', tab: { ...s.tab, ledger: '11월' }, cal: { ...s.cal, '11월': 9 } }));
       toast('가계부에 기록했습니다');
     },
-    recordCharge: () => { up({ charged: true, popup: null, live: null }); toast('충전을 기록했습니다'); },
+    recordCharge: () => {
+      const cur = getS();
+      if (cur.live && cur.live.type === 'charge') {
+        // 차량 데이터로 감지한 충전을 가계부에 넣는다
+        up((s) => {
+          if (!s.live || s.live.type !== 'charge') return { popup: null };
+          const row = liveChargeRow(s);
+          return { ledger: [row, ...s.ledger], live: null, charged: true, popup: null, flash: row.id };
+        });
+        toast('가계부에 기록했습니다');
+        return;
+      }
+      up({ charged: true, popup: null, live: null });
+      toast('충전을 기록했습니다');
+    },
     // 화면 데이터 전환: 시연(예시 데이터) / 차량(실제 차량 값)
     setSrc: (v) => up((s) => (v === s.src ? {} : { src: v, live: null, queued: null, kinds: null, lastKind: null, popup: null })),
     saveEntry: () => setS((s) => {

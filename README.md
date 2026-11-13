@@ -44,9 +44,10 @@ adb shell am start --user 10 -n com.hyundiary.mockup/.MainActivity
 
 - 처음 실행하면 차속·연료·위치 권한을 묻습니다. 허용해야 해당 값을 받습니다.
 - 설정 > 화면 데이터에서 "차량"을 고르면 화면이 차량 값으로 움직입니다. 설정 > 연결에서 연동 대상별 상태(연결됨, 권한 필요, 지원 안 함, 응답 없음)와 차량에서 받은 값을 확인할 수 있습니다.
-- 에뮬레이터 Virtual Console로 확인하는 방법
-  - 주유 감지: 기어 P에서 연료량을 5% 넘게 올리면 약 10초 뒤 "주유를 기록할까요?" 팝업이 뜹니다. 주유량은 연료량 변화와 탱크 용량으로 계산합니다.
-  - 주행 시작·종료: 기어를 P에서 D로 바꾸면 주행 화면, 다시 P로 바꾸면 주행 종료 팝업이 뜹니다.
+- 에뮬레이터에서 확인하는 방법(Virtual Console, `adb forward tcp:8088 tcp:8088`)
+  - 충전 감지(전기차): 시연 패널에서 "전기차로 전환"을 누르고, 기어 P에서 배터리 잔량을 5% 넘게 올립니다. 5분 동안 그대로이면 "충전을 기록할까요?" 팝업이 뜨고, 그 전에 출발하면 정차한 뒤에 뜹니다. "기록"을 누르면 실제 충전량과 금액이 가계부와 홈에 남습니다.
+  - 주유 감지(내연기관차): 감지 방식은 충전과 같으며(기어 P에서 연료가 5%p 넘게 늘고 10초 동안 그대로이면 1건), 주유량은 연료량 변화와 탱크 용량으로 계산합니다. 이 에뮬레이터는 Virtual Console에 연료량 조절이 없고 user 빌드라 `cmd car_service inject-vhal-event`도 거부되어 연료량을 바꿀 수 없습니다. 그래서 주유 감지는 단위 테스트와 브라우저 점검(`npm test`)으로 확인했습니다.
+  - 주행 시작·종료: 기어를 P에서 D로 바꾸면 주행 화면, 다시 P로 바꾸면 이번 주행의 실제 거리·시간·안전 기록으로 주행 종료 팝업이 뜹니다. 움직이지 않았으면(0.1 km 미만) 팝업을 띄우지 않습니다.
   - 주행 중 기록: 차속을 올리면 주행 거리가 쌓이고, 급감속·제한속도 초과·깜빡이 없는 차로 변경·안전벨트 미착용을 기록합니다. 주행가능거리가 남은 경로보다 짧아지면 주유 추천을 띄우고 음성으로 알립니다.
 - 주행 규제(CarUxRestrictions)가 켜지면 시연 모드여도 입력 없는 주행 화면으로 바뀌고, 팝업·영상·입력 화면을 막습니다. 규제가 풀리면 정차 화면으로 돌아옵니다.
 
@@ -102,7 +103,7 @@ keyPassword=...
 ### 4.2 필요한 설정
 
 - 권한: 실제로 호출하는 API의 권한만 선언합니다(7.3절). 차속(`android.car.permission.CAR_SPEED`), 연료(`android.car.permission.CAR_ENERGY`), 위치(`pleos.car.permission.FUSED_LOCATION`)는 처음 실행할 때 사용자 동의를 받습니다.
-- 네트워크: 실행 중에는 필요 없습니다. 화면 자원은 모두 APK 안에 있고, 음성 안내는 ON_DEVICE 모드라 INTERNET 권한을 두지 않습니다.
+- 네트워크: 실행 중에는 필요 없습니다. 화면 자원은 모두 APK 안에 있고, 음성 안내는 ON_DEVICE 모드라 INTERNET 권한을 두지 않습니다. 에뮬레이터에서 INTERNET 권한 없이 음성 안내가 나오는 것을 확인했습니다(첫 문장은 음성 엔진 준비로 약 14초 걸립니다).
 - 로그인, 계정, Pleos 앱 등록 정보(Client ID/Secret): 필요 없습니다.
 - 차량 상태: 정차·주행 모두 실행할 수 있습니다. `distractionOptimized`를 선언했으며, 주행 규제 중에는 화면이 주행 화면으로 바뀝니다.
 - 에뮬레이터: AVD `Pleos_Connect_v2.1.0`을 콜드 부트(`-no-snapshot`)로 켜고 부팅이 끝난 뒤 설치합니다.
@@ -167,10 +168,9 @@ FusedLocation ─┘        └──────── NativeBridge(경유지 �
 | 주유 추천·음성 안내 | NaviHelper 목적지·남은 거리, TextToSpeech(ON_DEVICE) | 주행가능거리 < 남은 거리 + 50 km(경로 없으면 100 km)면 주유 추천을 띄우고 한 문장으로 안내 |
 | 경유지 추가 | NaviHelper `addWaypoint` | 추천 주유소를 첫 번째 경유지로 넣음 |
 | 안전 운전 기록 | 차속, NaviHelper 제한속도, Vehicle `TurnSignal`·`SteeringWheel`·운전석 안전벨트 | 급감속(2초에 30 km/h 넘게), 제한속도 +10 km/h 3초 넘게, 40 km/h 이상에서 깜빡이 없이 핸들을 6° 넘게 0.8~5초 돌렸다 되돌림, 벨트 없이 10 km/h 이상 5초 |
-| 소모품 경고 | Vehicle `Safety` 경고등(Telltales) | 정차할 때마다 켜진 경고등을 읽어 와셔액 경고를 표시 |
 | 주행 중 화면 제한 | Car API `CarUxRestrictionsManager` | 규제 중에는 주행 화면만 보이고 팝업·영상·입력을 막음 |
 
-- 모든 SDK 콜백은 메인 스레드로 옮겨 처리하고, Vehicle SDK 조회에는 3초 타임아웃을 둡니다(binder 오류 때 콜백이 오지 않을 수 있음).
+- 모든 SDK 콜백은 메인 스레드로 옮겨 처리하고, Vehicle SDK 조회에는 8초 타임아웃을 둡니다(binder 오류 때 콜백이 오지 않을 수 있음. 에뮬레이터의 첫 조회는 3초를 넘기기도 함).
 - 연동 대상 하나가 실패해도 나머지는 계속 동작하며, 실패한 기능은 설정 > 연결에 상태로 표시합니다. 차량 API가 없는 기기에서는 시연 모드로만 동작합니다.
 - 판단 로직(`logic/`)은 Android에 의존하지 않는 Kotlin 코드이며 단위 테스트로 기준을 검증합니다.
 
@@ -186,20 +186,23 @@ FusedLocation ─┘        └──────── NativeBridge(경유지 �
 | `pleos.car.permission.CAR_ENERGY` | EvBattery | 설치 시 |
 | `pleos.car.permission.CAR_LIGHTS` | TurnSignal | 설치 시 |
 | `pleos.car.permission.CAR_SEATS` | 안전벨트 | 설치 시 |
-| `pleos.car.permission.CAR_SAFETY` | 경고등 | 설치 시 |
 | `pleos.car.permission.NAVI_ROUTE` | 목적지·주행 정보, 현재 위치 주소 | 설치 시 |
 | `pleos.car.permission.NAVI_ROUTE_SEARCH` | 경유지 추가 | 설치 시 |
 | `pleos.car.permission.TTS_SERVICE` | 음성 안내 | 설치 시 |
 | `pleos.car.permission.FUSED_LOCATION` | 현재 위치 | 실행 중 |
 
-TextToSpeech SDK가 합쳐 넣는 `android.permission.INTERNET`은 매니페스트에서 뺍니다(`tools:node="remove"`).
+TextToSpeech SDK가 합쳐 넣는 `android.permission.INTERNET`은 매니페스트에서 뺍니다(`tools:node="remove"`). 빌드된 APK의 합쳐진 매니페스트에 INTERNET 권한이 없음을 확인했습니다.
+
+Vehicle SDK의 경고등(`Safety` Telltales)은 쓰지 않습니다. 에뮬레이터에서 `CAR_SAFETY`만으로는 조회가 거부되어 `PRIVATE_CAR_SAFETY` 권한이 필요했고, 경고등 종류에 와셔액이 없어 소모품 화면에 쓸 수 없었습니다. 쓰지 않는 권한을 두지 않기 위해 `CAR_SAFETY`도 선언하지 않습니다.
 
 ## 8. 제약과 주의사항
 
 - 화면은 목업입니다. 수치·주유소·단가는 예시 값이며, 유가 API(오피넷)와 주유소 검색은 연동하지 않았습니다. 차량 모드에서도 단가는 1,689원/L(충전 347원/kWh) 예시 값을 씁니다.
 - 주유소 좌표는 경유지 추가를 보여 주기 위한 예시 좌표입니다.
 - 연료 %는 Pleos Vehicle SDK `Fuel`이 에뮬레이터에서 값을 주지 않아 AAOS Car API(`FUEL_LEVEL`)로 받습니다. 에뮬레이터의 `RANGE_REMAINING`은 0이라 주행가능거리는 추정값입니다.
-- 에뮬레이터의 누적 주행거리 조회 값은 0이라, 주행 거리는 차속을 적분해서 구합니다.
+- 에뮬레이터의 누적 주행거리는 0이라, 주행 거리는 차속을 적분해서 구합니다. 차량 모드 화면에는 차량이 보낸 누적 주행거리를 그대로 보여 줍니다.
+- 소모품 화면의 와셔액 경고, 엔진오일 교환 시기, 안전 운전 점수, 월별 통계는 시연 값입니다. 차량 모드에서는 차량 신호가 없는 와셔액 경고를 표시하지 않습니다.
+- 전기차 화면의 가계부 목록은 시연용 내연기관 기록을 함께 보여 줍니다. 차량 모드에서 기록한 충전은 목록 맨 위와 홈에 실제 값으로 들어갑니다.
 - NaviHelper의 남은 거리 단위는 문서에 없어 미터로 처리했습니다.
 - 차량 연동은 앱(Activity)이 실행 중일 때만 동작합니다. 앱이 꺼진 동안의 주유 감지는 포그라운드 서비스가 필요하며 아직 만들지 않았습니다.
 - portrait(한 window) 전용 화면은 아직 없습니다. landscape 화면을 줄여서 보여 줍니다.
