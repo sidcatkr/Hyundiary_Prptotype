@@ -253,6 +253,8 @@ const fuelPct = (S) => (carOn(S) && S.car.fuelPct != null ? Math.round(S.car.fue
 const socPct = (S) => (carOn(S) && S.car.evSoc != null ? Math.round(S.car.evSoc) : S.charged ? 82 : 34);
 const range = (S) => {
   if (carOn(S) && !S.ev && S.car.rangeKm != null) return Math.round(S.car.rangeKm);
+  // 전기차는 차량이 주행가능거리를 주지 않아 잔량 × 배터리 용량 × 전비로 추정한다
+  if (carOn(S) && S.ev && S.car.evSoc != null && S.car.evCapKwh) return Math.round((S.car.evSoc / 100) * S.car.evCapKwh * EV_EFF);
   return S.ev ? (S.charged ? 410 : 170) : Math.max(0, Math.round((tank(S) ? 500 : 120) - (S.mode === 'driving' ? S.trip.km : 0)));
 };
 const routeOf = (S) => (carOn(S) && S.car.route && S.car.route.active ? S.car.route : null);
@@ -548,10 +550,10 @@ function HomeEv({ S, A }) {
           : S.charged && !carOn(S) ? html`<${Row} title="집 완속충전" detail="오늘 07:10 · 28.4 kWh · 자동 기록" value="9,860원" icon="plug" />` : null}
       </div>
       <div className="col">
-        <${H2} first>확인할 항목<//>
+        ${carOn(S) ? null : html`<${H2} first>확인할 항목<//>
         <${Row} title="충전구" detail="차량에서 읽음" value="닫힘" icon="plug" dense />
-        <${Row} title="타이어 공기압" detail="차량 경고 신호" value="정상" icon="tire" dense />
-        <${H2}>안전 운전<//>
+        <${Row} title="타이어 공기압" detail="차량 경고 신호" value="정상" icon="tire" dense />`}
+        <${H2} first=${carOn(S)}>안전 운전<//>
         <${Row} title="이번 주" detail="주행 5회 · 142 km" value="91점" icon="shield" chevron onClick=${() => A.go('safety', { dir: 'fade' })} />
       </div>
     </div>

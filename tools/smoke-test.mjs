@@ -126,8 +126,10 @@ try {
   await car.waitForTimeout(300);
   await car.getByRole('button', { name: '전기차로 전환' }).click();
   await car.waitForTimeout(700);
-  await emit({ type: 'snapshot', data: { evSoc: 85, speedKmh: 0, gear: 'P', odoKm: 0, route: { active: false } } });
+  await emit({ type: 'snapshot', data: { evSoc: 85, evCapKwh: 77.4, speedKmh: 0, gear: 'P', odoKm: 0, route: { active: false } } });
   await car.waitForTimeout(400);
+  check((await text()).includes('주행가능거리 382 km'), '차량 모드 전기차 주행가능거리가 잔량 × 용량 × 전비로 계산되지 않음');
+  check(!(await text()).includes('타이어 공기압'), '차량 모드 전기차 홈에 차량 신호가 없는 항목이 보임');
   check((await text()).includes('누적 주행거리') && (await text()).includes('0 km') && !(await text()).includes('18,240 km'), '차량 모드 전기차 홈에 실제 누적 주행거리가 보이지 않음');
   await emit({ type: 'charge', fromPct: 60, toPct: 85, kwh: 19.4, at: Date.now() });
   await car.waitForTimeout(700);
