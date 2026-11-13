@@ -10,6 +10,11 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Pleos Connect SDK(Vehicle, NaviHelper, TextToSpeech, FusedLocation). 이 저장소에서는 Pleos 패키지만 받는다.
+        maven {
+            url 'https://nexus-playground.pleos.ai/repository/maven-releases/'
+            content { includeGroupByRegex 'ai\\.pleos(\\..*)?' }
+        }
     }
 }
 rootProject.name = 'HyundiaryMockup'

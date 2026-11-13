@@ -1,4 +1,5 @@
-// Pleos 샘플 앱과 같은 툴체인: AGP 8.8.2 / Gradle 8.10.2 / JDK 17
+// Pleos 샘플 앱과 같은 툴체인: AGP 8.8.2 / Gradle 8.10.2 / JDK 17 / Kotlin 2.0 (FusedLocation 샘플과 같은 조합)
 plugins {
     id 'com.android.application' version '8.8.2' apply false
+    id 'org.jetbrains.kotlin.android' version '2.0.21' apply false
 }
