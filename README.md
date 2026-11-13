@@ -4,7 +4,8 @@
 
 ## 1. 앱 이름 및 한 줄 소개
 
-- 앱 이름: Hyundiary (패키지 `com.hyundiary.mockup`)
+- 팀명: 한건
+- 앱 이름: Hyundiary (패키지 `com.hyundiary.mockup`, 에뮬레이터 앱 목록에 표시되는 이름도 Hyundiary)
 - 한 줄 소개: 주유를 자동으로 가계부에 기록하고, 경로 위 주유소 추천, 소비 습관 분석, 안전 운전 기록, 승차감 기록을 차량 화면에서 보여 주는 Pleos Connect 앱의 프로토타입입니다.
 
 이 저장소의 앱은 화면은 목업이고 내부 코드는 실제 차량 API에 연결된 프로토타입입니다.
@@ -15,7 +16,7 @@
 
 ## 2. APK 파일 위치
 
-- `apk/건한_Hyundiary_release.apk` (release 빌드, APK Signature Scheme v3 서명. minSdk 28이라 v2 서명은 넣지 않습니다)
+- `apk/한건_Hyundiary_release.apk` (release 빌드, APK Signature Scheme v3 서명. minSdk 28이라 v2 서명은 넣지 않습니다)
 
 ## 3. 실행 방법
 
@@ -24,7 +25,7 @@
 Pleos Connect 에뮬레이터를 완전히 부팅한 뒤 다음을 실행합니다.
 
 ```bash
-adb install -r apk/건한_Hyundiary_release.apk
+adb install -r apk/한건_Hyundiary_release.apk
 adb shell am start --user 10 -n com.hyundiary.mockup/.MainActivity
 ```
 
