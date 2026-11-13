@@ -35,6 +35,10 @@ class NativeBridge(private val hub: VehicleHub) {
         return hub.speak(text)
     }
 
+    /** 승차감 기록 켜기/끄기(설정). */
+    @JavascriptInterface
+    fun cupEnable(on: Boolean): Boolean = hub.cupEnable(on)
+
     companion object {
         private const val MAX_JSON = 2_000
         private const val MAX_TEXT = 300

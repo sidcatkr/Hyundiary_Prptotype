@@ -1618,6 +1618,11 @@ window.PLEOS_ICONS = {
       if (!N) return false;
       return call(function () { return N.speak(String(text)); }) === true;
     },
+    // 승차감 기록 켜기/끄기. 앱은 주행을 시작할 때 판정(logic/CoffeeCup)을 시작하고, cup 이벤트로 결과를 보낸다.
+    cupEnable: function (on) {
+      if (!N || !N.cupEnable) return false;
+      return call(function () { return N.cupEnable(!!on); }) === true;
+    },
     _emit: function (ev) {
       if (typeof ev === 'string') ev = parse(ev);
       if (!ev || typeof ev.type !== 'string') return;
@@ -1742,7 +1747,7 @@ const KIND_NAME = { decel: '급감속', speeding: '제한속도 초과', lane: '
 // 설정 > 연결: 연동 대상과 상태 표기
 const SRC_ROWS = [
   ['car', '차량 데이터', 'AAOS Car API · 연료, 차속, 기어, 주행 규제'],
-  ['vehicle', 'Pleos Vehicle SDK', '주행거리, 배터리, 깜빡이, 핸들, 안전벨트'],
+  ['vehicle', 'Pleos Vehicle SDK', '주행거리, 배터리, 깜빡이, 핸들, 안전벨트, 주행 모드'],
   ['navi', '내비게이션', 'Pleos NaviHelper · 목적지, 제한속도, 경유지'],
   ['voice', '음성 안내', 'Pleos TextToSpeech'],
   ['location', '위치', 'Pleos FusedLocation'],
@@ -1761,13 +1766,70 @@ const native = () => !!(HV && HV.available);
 const pad2 = (n) => String(n).padStart(2, '0');
 const whenOf = (ms) => { const d = new Date(ms || Date.now()); return (d.getMonth() + 1) + '월 ' + d.getDate() + '일 ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
 const sumCounts = (c) => KIND_KEYS.reduce((a, k) => a + ((c && c[k]) || 0), 0);
+
+// ── 승차감 기록 ──
+// 판정은 앱의 logic/CoffeeCup.kt가 한다. 운전석 옆에 가득 찬 커피잔이 있다고 보고, 차속 변화율과 차속·조향각으로 흔들림(g)을 계산하는 모델이다.
+// 화면에는 그림 없이 점수와 횟수로만 보인다. 0.25 g 넘으면 흔들림 −2점, 0.4 g 넘으면 큰 흔들림 −10점, 깜빡이 없이 차로 변경 −5점,
+// 정속 1분 +1점(주행 모드를 알려 주는 차는 에코 모드일 때만). 주행 중에는 화면을 바꾸지 않고, 큰 흔들림만 음성으로 한 번 알린다.
+const CUP_RULES = [
+  ['spill', '큰 흔들림', '0.4 g 넘음 · 급제동, 급출발, 급한 핸들', '−10점'],
+  ['wobble', '흔들림', '0.25 g 넘음', '−2점'],
+  ['lane', '깜빡이 없이 차로 변경', '핸들 움직임으로 추정', '−5점'],
+  ['eco', '정속 주행', '30 km/h 이상에서 1분 동안 흔들림 없이', '+1점'],
+];
+const CUP_NAME = { wobble: '흔들림', spill: '큰 흔들림', lane: '깜빡이 없이 차로 변경', eco: '정속 주행' };
+const CUP_LOSS = { wobble: 2, spill: 10, lane: 5 };
+const CUP_COACH = '급한 가속이나 제동, 핸들 조작이 있었습니다. 천천히 바꿔 주세요.'; // 앱 VehicleHub.COACH_MSG와 같다
+// 11월 이 차의 누적(시연 데이터): [주행 km, 감점, 보너스]
+const CUP_NOV = [1160, 161, 12];
+// 이 차의 월별 승차감 점수와 연비(시연 데이터): [월, 점수, 연비 km/L, 평균 단가 원/L]. 11월은 누적으로 계산
+const CUP_MONTHS = [['8월', 81.0, 12.1, 1748], ['9월', 85.3, 12.5, 1751], ['10월', 90.1, 12.8, 1738]];
+// 월 점수: 감점(보너스 뺌)을 100 km 주행당으로 환산해 100에서 뺀다(CoffeeCup.scorePer100Km와 같은 식). 20 km 미만은 null
+const cupScore = (lost, bonus, km) => (km < 20 ? null : Math.max(0, Math.min(100, 100 - (Math.max(0, lost - bonus) * 100) / km)));
+const CUP_ZERO = () => ({ wobble: 0, spill: 0, lane: 0, eco: 0 });
+const CUP0 = () => ({
+  live: false, level: 100, bonus: 0, counts: CUP_ZERO(), blocked: null, result: null, add: [0, 0, 0],
+  trips: [{ id: 'c1', when: '11월 9일 07:40', route: '서초동 → 안성휴게소', km: 62.4, sec: 3480, level: 84, bonus: 2, counts: { wobble: 3, spill: 1, lane: 0, eco: 2 } }],
+});
+const durTxt = (sec) => (sec < 60 ? Math.round(sec) + '초' : sec < 3600 ? Math.round(sec / 60) + '분' : Math.floor(sec / 3600) + '시간 ' + Math.round((sec % 3600) / 60) + '분');
+// 11월 누적: 시연 데이터에 이번에 기록한 주행을 더한다
+function cupMonth(S) {
+  const a = S.cup.add;
+  const km = CUP_NOV[0] + a[0], lost = CUP_NOV[1] + a[1], bonus = CUP_NOV[2] + a[2];
+  return { km, lost, bonus, score: cupScore(lost, bonus, km) };
+}
+// 판정 1건을 상태에 반영한다(시연·차량 공통)
+function cupApply(c, ev) {
+  const counts = ev.counts ? { ...CUP_ZERO(), ...ev.counts } : { ...c.counts, [ev.kind]: (c.counts[ev.kind] || 0) + 1 };
+  const level = ev.level != null ? ev.level : Math.max(0, c.level + (ev.kind === 'eco' ? 0 : ev.delta));
+  const bonus = ev.bonus != null ? ev.bonus : ev.kind === 'eco' ? c.bonus + ev.delta : c.bonus;
+  return { ...c, level, bonus, counts };
+}
+// 주행 1건의 기록을 마감하고 11월 누적에 더한다
+function cupFinish(c, st) {
+  const r = { id: 'c' + Date.now(), when: whenOf(Date.now()), route: st.route || '', km: st.km || 0, sec: st.sec || 0, level: st.level, bonus: st.bonus || 0, counts: { ...CUP_ZERO(), ...st.counts } };
+  return { ...c, live: false, blocked: null, result: r, trips: [r, ...c.trips].slice(0, 20), add: [c.add[0] + r.km, c.add[1] + (100 - r.level), c.add[2] + r.bonus] };
+}
+const cupDetail = (r) => {
+  const n = (k) => r.counts[k] || 0;
+  const parts = ['spill', 'wobble', 'lane'].filter((k) => n(k)).map((k) => CUP_NAME[k] + ' ' + n(k));
+  if (r.bonus) parts.push('정속 +' + r.bonus);
+  return parts.length ? parts.join(' · ') : '흔들림 없음';
+};
+// 주행 종료 팝업의 승차감 한 줄(기록이 없으면 그리지 않는다)
+function CupRow({ S }) {
+  const r = S.cup.result;
+  if (!r) return null;
+  if (r.skipped) return html`<${Row} title="승차감" detail="안전벨트를 매지 않아 기록하지 않았습니다" value="–" dense />`;
+  return html`<${Row} title="승차감" detail=${cupDetail(r)} value=${r.level + '점'} dense />`;
+}
 const VIDEOS = [['차로를 바꿀 때 깜빡이 켜는 순서', '3분'], ['앞차와 거리 두는 법', '4분']];
 const CATS = ['주유', '주차', '통행료', '세차', '정비', '기타'];
 const CAT_ICON = { 주유: 'fuel', 주차: 'parking', 통행료: 'toll', 세차: 'drop', 정비: 'wrench', 기타: 'ledger' };
 const CAT_DEF = { 주차: ['6,000', '강남역 공영주차장'], 통행료: ['2,100', '서울TG'], 세차: ['12,000', ''], 정비: ['', ''], 기타: ['', ''] };
 const DATES = ['11월 9일', '11월 8일', '11월 7일'];
 const FTYPES = ['휘발유', '경유', 'LPG'];
-const MENU = [['home', '홈', 'home'], ['ledger', '가계부', 'ledger'], ['stats', '통계', 'chart'], ['safety', '안전 운전', 'shield'], ['care', '소모품', 'wrench'], ['stations', '주유소', 'fuel'], null, ['settings', '설정', 'gear']];
+const MENU = [['home', '홈', 'home'], ['ledger', '가계부', 'ledger'], ['stats', '통계', 'chart'], ['safety', '안전 운전', 'shield'], ['cup', '승차감', 'gauge'], ['care', '소모품', 'wrench'], ['stations', '주유소', 'fuel'], null, ['settings', '설정', 'gear']];
 const MENU_OF = { detail: 'ledger', entry: 'ledger', trip: 'safety' };
 
 // ── 날짜별 기록 (요일은 기존 화면의 '11월 9일 일요일'에 맞춘 달력 배치) ──
@@ -1871,8 +1933,8 @@ const formFor = (cat) => ({
 const fresh = () => ({
   ev: false, mode: 'parked', page: 'home', arg: null, dir: 'fade', popup: null, drive: 'route', video: 0,
   refueled: false, filled: false, charged: false, washer: true, stop: false, speed: 0, trip: { km: 0, sec: 0, events: 0 },
-  tab: { ledger: '11월', lview: '달력', stats: '요약', range: '6개월', safety: '이번 주', stations: '추천순' }, cal: {},
-  set: { fuel: '휘발유', auto: '켜기', safety: '켜기' }, tank: '60', stSel: 'seocho', evSel: 1,
+  tab: { ledger: '11월', lview: '달력', stats: '요약', range: '6개월', safety: '이번 주', stations: '추천순', cup: '기록' }, cal: {},
+  set: { fuel: '휘발유', auto: '켜기', safety: '켜기', cup: '끄기' }, tank: '60', stSel: 'seocho', evSel: 1, cup: CUP0(),
   form: formFor('주차'), ledger: LEDGER0(), flash: null, toast: null,
   // 차량 연동(src/native.js): src '시연'(기본, 예시 데이터) 또는 '차량'(AAOS Car API·Pleos SDK 실제 값)
   // car=최신 차량 값, caps=연동 대상별 연결 상태, restricted=주행 규제, live=감지한 주유·충전, kinds=이번 주행 안전 기록
@@ -2620,6 +2682,69 @@ function Safety({ S, A }) {
   </div>`;
 }
 
+// 승차감: 판정 결과를 점수와 횟수로만 보여 준다(정차 화면 전용)
+function Cup({ S, A }) {
+  const t = S.tab.cup || '기록';
+  const c = S.cup;
+  const m = cupMonth(S);
+  let body;
+  if (t === '연비') {
+    const nov = ['11월', m.score || 0, EFF30, novPrice(S)];
+    const all = [...CUP_MONTHS, nov];
+    const perKm = (x) => Math.round(x[3] / x[2]);
+    body = html`<div className="cols">
+      <div className="col">
+        <${H2} first>월별 승차감 점수와 연비<//>
+        ${all.map((x) => html`<${Row} key=${x[0]} title=${x[0]} detail=${'승차감 ' + x[1].toFixed(1) + '점 · 1 km당 연료비 ' + won(perKm(x)) + '원'} value=${x[2].toFixed(1) + ' km/L'} dense />`)}
+        <p className="cap" style=${{ margin: '12px 0 0' }}>11월 점수는 이번 달 주행 합계 · 연비는 주유량과 주행거리로 계산</p>
+      </div>
+      <div className="col">
+        <${H2} first>8월과 10월 비교<//>
+        <div>
+          <${KV} k="승차감 점수" v=${all[0][1].toFixed(1) + ' → ' + all[2][1].toFixed(1) + '점'} />
+          <${KV} k="연비" v=${all[0][2].toFixed(1) + ' → ' + all[2][2].toFixed(1) + ' km/L'} />
+          <${KV} k="1 km당 연료비" v=${won(perKm(all[0])) + ' → ' + won(perKm(all[2])) + '원'} />
+          <${KV} total k="11월" v=${nov[1].toFixed(1) + '점 · ' + nov[2].toFixed(1) + ' km/L'} />
+        </div>
+        <p className="cap" style=${{ margin: '16px 0 0' }}>주유비는 가계부의 주유 기록을 씁니다. 결제 내역은 연동 전이며, 8~10월 점수와 연비는 시연 데이터입니다.</p>
+      </div>
+    </div>`;
+  } else {
+    const off = S.set.cup === '끄기';
+    const now = off ? '승차감 기록이 꺼져 있습니다' : c.live ? '이번 주행을 기록하고 있습니다' : c.blocked === 'belt' ? '안전벨트를 매면 기록을 시작합니다' : '출발하면 기록합니다 · 운전석 안전벨트를 맨 주행만 기록';
+    const per100 = m.km ? (Math.max(0, m.lost - m.bonus) * 100) / m.km : 0;
+    body = html`<div className="cols">
+      <div className="col">
+        <div className="score">
+          <div className="score-top"><div style=${{ display: 'flex', alignItems: 'baseline', gap: '12px' }}><small>11월 점수</small><span className="big">${m.score == null ? '–' : html`<${Num} v=${m.score} d=${1} />점`}</span></div><small>10월 ${CUP_MONTHS[2][1].toFixed(1)}점</small></div>
+          <${Meter} v=${m.score || 0} label="승차감 점수" />
+        </div>
+        <div className="fhint" style=${{ margin: '16px 0 0' }}>${now}</div>
+        ${off && html`<div style=${{ margin: '16px 0 0' }}><${Btn} v="primary" onClick=${() => A.setting('cup', '켜기')}>승차감 기록 켜기<//></div>`}
+        <${H2}>판정 기준<//>
+        ${CUP_RULES.map(([k, n, d, v]) => html`<${Row} key=${k} title=${n} detail=${d} value=${v} tone=${k === 'eco' ? 'pos' : ''} dense />`)}
+      </div>
+      <div className="col">
+        <${H2} first>최근 주행<//>
+        ${c.trips.map((r) => html`<${Row} key=${r.id} title=${r.when + (r.route ? ' · ' + r.route : '')} detail=${r.km.toFixed(1) + ' km · ' + durTxt(r.sec) + ' · ' + cupDetail(r)} value=${r.level + '점'} dense />`)}
+        <${H2}>11월 점수 계산<//>
+        <div>
+          <${KV} k="주행 거리" v=${won(Math.round(m.km)) + ' km'} />
+          <${KV} k="감점 합계" small="큰 흔들림, 흔들림, 깜빡이 없이 차로 변경" v=${m.lost + '점'} />
+          <${KV} k="정속 주행" v=${'+' + m.bonus + '점'} />
+          <${KV} total k="100 km당 감점" small=${'(' + m.lost + ' − ' + m.bonus + ') × 100 ÷ ' + won(Math.round(m.km))} v=${per100.toFixed(1) + '점'} />
+        </div>
+        <p className="cap" style=${{ margin: '16px 0 0' }}>주행 거리가 달라도 같은 기준이 되도록 100 km 주행당 감점을 100에서 뺍니다. 11월 9일 기록과 11월 누적 거리는 시연 데이터를 포함합니다.</p>
+      </div>
+    </div>`;
+  }
+  return html`<div className="pg">
+    <${Head} title="승차감" sub="차량 데이터로 계산한 흔들림 기록"
+      right=${html`<div style=${{ width: '420px' }}><${Tabs} items=${['기록', '연비']} value=${t} label="보기" onChange=${(x) => A.tab('cup', x)} /></div>`} />
+    ${body}
+  </div>`;
+}
+
 function SpeedGraph({ sel }) {
   const W = 556, H = 168, X0 = 52, X1 = 548, Y0 = 36, Y1 = 138;
   const fx = (t) => X0 + (t / 38) * (X1 - X0);
@@ -2770,7 +2895,7 @@ function Settings({ S, A }) {
         ${native() ? html`<div className="setg"><div className="setl">화면 데이터</div>
           <${Seg} items=${['시연', '차량']} value=${S.src} label="화면 데이터" onChange=${A.setSrc} />
           <div className="fhint" style=${{ marginTop: '8px' }}>시연: 예시 데이터와 시연 버튼으로 동작합니다. 차량: 연료·주행·안전 기록을 차량에서 받습니다.</div></div>` : null}
-        ${[['연료 종류', 'fuel', FTYPES], ['주유 자동 기록', 'auto', ['켜기', '끄기']], ['안전 운전 기록', 'safety', ['켜기', '끄기']]].map(([l, key, items]) => html`<div key=${key} className="setg"><div className="setl">${l}</div>
+        ${[['연료 종류', 'fuel', FTYPES], ['주유 자동 기록', 'auto', ['켜기', '끄기']], ['안전 운전 기록', 'safety', ['켜기', '끄기']], ['승차감 기록', 'cup', ['켜기', '끄기']]].map(([l, key, items]) => html`<div key=${key} className="setg"><div className="setl">${l}</div>
           <${Seg} items=${items} value=${S.set[key]} label=${l} onChange=${(v) => A.setting(key, v)} /></div>`)}
         <${Field} id="f-tank" label="연료탱크 용량" value=${S.tank} unit="L" numeric hint="주유량 계산에 씁니다" onInput=${(v) => A.set({ tank: v })} />
       </div>
@@ -2790,7 +2915,7 @@ function CarValues({ S }) {
     <${Row} title="내비게이션" detail=${r.active ? (r.dest || '목적지') + ' · 제한속도 ' + v(c.speedLimit, ' km/h') : '경로 안내 없음'} value=${r.active ? v(r.remainKm, ' km') : '–'} dense />`;
 }
 
-const PAGES = { home: Home, ledger: Ledger, detail: Detail, entry: Entry, stats: Stats, safety: Safety, trip: Trip, care: Care, stations: Stations, settings: Settings };
+const PAGES = { home: Home, ledger: Ledger, detail: Detail, entry: Entry, stats: Stats, safety: Safety, cup: Cup, trip: Trip, care: Care, stations: Stations, settings: Settings };
 function Parked({ S, A }) {
   const P = PAGES[S.page] || Home;
   const key = S.page + ':' + (S.page === 'detail' ? S.arg : '') + (S.ev && S.page === 'home' ? ':ev' : '');
@@ -2854,6 +2979,7 @@ function PopupLayer({ S, A }) {
       actions=${[['닫기', 'primary', A.closePopup]]}>
       <${Row} title=${c.name} detail=${c.basis + '로 계산'} value=${'약 ' + won(c.won) + '원'} dense />
       <${Row} title="안전 기록" detail=${kinds.length ? kinds.join(' · ') : '기록 없음'} value=${t.events ? t.events + '건' : '없음'} dense />
+      <${CupRow} S=${S} />
     <//>`;
   }
   if (S.popup === 'tripEnd') {
@@ -2865,6 +2991,7 @@ function PopupLayer({ S, A }) {
       actions=${[['닫기', 'basic', A.closePopup], ['자세히', 'primary', () => A.go('trip', { dir: 'fwd' })]]}>
       <${Row} title="연료비" detail="연비 12.2 km/L · 1,689원/L로 계산" value=${'약 ' + won(Math.round(((km / 12.2) * 1689) / 10) * 10) + '원'} dense />
       <${Row} title="안전 기록" detail=${ev ? (live ? '급감속 ' + ev + '회' : '급감속 1 · 제한속도 초과 1 · 깜빡이 없이 차로 변경 1') : '기록 없음'} value=${ev ? ev + '건' : '없음'} dense />
+      <${CupRow} S=${S} />
     <//>`;
   }
   if (S.popup === 'charge' && S.live && S.live.type === 'charge') {
@@ -2902,7 +3029,7 @@ function VideoLayer({ S, A }) {
 
 // ── 주행 중 ──
 function NavPane({ S }) {
-  const route = S.drive !== 'nonav';
+  const route = S.src === '차량' ? !!routeOf(S) : S.drive !== 'nonav';
   const pin = route && (S.stop || S.drive === 'refuel');
   const left = destLeft(S);
   return html`<div className="nav">
@@ -3051,7 +3178,7 @@ function vehicleEvent(ev, setS, getS) {
         if (ev.phase === 'start') {
           // 떠 있던 주유·충전 팝업은 지우지 않고 정차한 뒤에 다시 띄운다
           const keep = s.popup === 'refuel' || s.popup === 'charge' ? s.popup : s.queued;
-          return { ...s, mode: 'driving', forced: false, drive: driveView(s), popup: null, queued: keep, video: 0, stop: false, trip: { km: 0, sec: 0, events: 0 }, kinds: { decel: 0, speeding: 0, lane: 0, belt: 0 }, lastKind: null };
+          return { ...s, mode: 'driving', forced: false, drive: driveView(s), popup: null, queued: keep, video: 0, stop: false, trip: { km: 0, sec: 0, events: 0 }, kinds: { decel: 0, speeding: 0, lane: 0, belt: 0 }, lastKind: null, cup: { ...s.cup, result: null } };
         }
         const t = ev.trip || {};
         const trip = { km: t.km || 0, sec: t.sec || 0, events: sumCounts(t.events) };
@@ -3073,6 +3200,22 @@ function vehicleEvent(ev, setS, getS) {
       break;
     case 'safety':
       live((s) => (s.mode !== 'driving' ? s : { ...s, drive: 'safety', lastKind: ev.kind, kinds: ev.counts || s.kinds, trip: { ...s.trip, events: sumCounts(ev.counts) } }));
+      break;
+    case 'cup':
+      live((s) => {
+        const c = s.cup;
+        if (s.set.cup !== '켜기') return s;
+        if (ev.phase === 'start') return { ...s, cup: { ...c, live: true, level: 100, bonus: 0, counts: CUP_ZERO(), result: null, blocked: null } };
+        if (ev.phase === 'blocked') return { ...s, cup: { ...c, blocked: ev.reason || 'belt', result: null } };
+        if (ev.phase === 'event') return c.live ? { ...s, cup: cupApply(c, ev) } : s;
+        if (ev.phase !== 'end') return s;
+        // 기록은 곧 이어지는 주행 종료 팝업에 한 줄로 들어간다. 움직이지 않은 주행(0.1 km 미만)은 stage가 없다
+        if (ev.stage) {
+          const st = ev.stage;
+          return { ...s, cup: cupFinish(c, { level: st.level, bonus: st.bonus, counts: st.counts, km: st.km, sec: st.sec }) };
+        }
+        return { ...s, cup: { ...c, live: false, blocked: null, result: c.blocked ? { skipped: 'belt' } : null } };
+      });
       break;
     case 'fuelLow': {
       const s = getS();
@@ -3105,7 +3248,10 @@ function makeActions(setS, getS) {
     }),
     tab: (key, v) => up((s) => ({ tab: { ...s.tab, [key]: v }, flash: null })),
     cal: (m, d) => up((s) => ({ cal: { ...s.cal, [m]: d }, flash: null })),
-    setting: (key, v) => up((s) => ({ set: { ...s.set, [key]: v } })),
+    setting: (key, v) => {
+      up((s) => ({ set: { ...s.set, [key]: v }, ...(key === 'cup' && v === '끄기' ? { cup: { ...s.cup, live: false } } : {}) }));
+      if (key === 'cup' && native()) HV.cupEnable(v === '켜기');
+    },
     form: (patch) => up((s) => ({ form: { ...s.form, ...patch } })),
     newEntry: (cat, dir) => up((s) => ({ page: 'entry', dir: dir || (s.page === 'home' || s.page === 'ledger' || s.page === 'care' ? 'fwd' : 'fade'), popup: null, form: formFor(cat), flash: null })),
     closePopup: () => up({ popup: null }),
@@ -3147,7 +3293,7 @@ function makeActions(setS, getS) {
       toast('충전을 기록했습니다');
     },
     // 화면 데이터 전환: 시연(예시 데이터) / 차량(실제 차량 값)
-    setSrc: (v) => up((s) => (v === s.src ? {} : { src: v, live: null, queued: null, kinds: null, lastKind: null, popup: null })),
+    setSrc: (v) => up((s) => (v === s.src ? {} : { src: v, live: null, queued: null, kinds: null, lastKind: null, popup: null, cup: { ...s.cup, live: false, blocked: null, result: null } })),
     saveEntry: () => setS((s) => {
       const f = s.form;
       const fuel = f.cat === '주유';
@@ -3177,18 +3323,39 @@ function makeActions(setS, getS) {
   };
   // 실제 차량이 주행 규제 중이면 시연 버튼으로도 정차 화면으로 바꾸지 않는다
   const park = (patch) => up((s) => (s.restricted ? {} : { mode: 'parked', speed: 0, video: 0, page: 'home', dir: 'fade', ...(typeof patch === 'function' ? patch(s) : patch) }));
+  // 시연: 승차감 판정 1건. 주행 화면은 바꾸지 않고, 큰 흔들림은 앱에서 음성으로 알린다
+  const cupHit = (kind) => {
+    const s = getS();
+    if (s.mode !== 'driving' || !s.cup.live) D.cupDrive();
+    up((x) => ({ cup: cupApply(x.cup, { kind, delta: -CUP_LOSS[kind] }) }));
+    if (kind === 'spill' && native()) HV.speak(CUP_COACH);
+  };
+  // 시연: 주행을 마치면 승차감 기록도 마감한다. example이면 기록 중이 아니어도 예시 기록(흔들림 1, 차로 변경 1)을 쓴다
+  const cupDone = (s, example) => {
+    const c = s.cup;
+    if (!c.live && !example) return { ...c, result: null };
+    const real = s.trip.km > 0.5;
+    const st = c.live ? { level: c.level, bonus: c.bonus, counts: c.counts } : { level: 93, bonus: 1, counts: { wobble: 1, spill: 0, lane: 1, eco: 1 } };
+    return cupFinish(c, { ...st, km: real ? s.trip.km : 21.4, sec: real ? s.trip.sec : 2280, route: real ? '' : '서초동 → 양재동' });
+  };
   const drive = (view, events) => up((s) => ({ mode: 'driving', drive: view, popup: null, video: 0, trip: s.mode === 'driving' ? { ...s.trip, events: Math.max(s.trip.events, events || 0) } : { km: 0, sec: 0, events: events || 0 } }));
-  const D = {
+  let D = null;
+  D = {
     start: () => { up({ ev: false }); drive('route'); },
     suggest: () => { up((s) => ({ ev: false, refueled: false, filled: false, stop: false, flash: null, ledger: s.ledger.filter((r) => r.id !== 'f1109' && !r.demoFill) })); drive('refuel'); },
     arrive: () => { park((s) => ({ ev: false, filled: true, popup: s.refueled ? null : 'refuel' })); },
-    tripEnd: () => park({ ev: false, popup: 'tripEnd' }),
+    tripEnd: () => park((s) => ({ ev: false, popup: 'tripEnd', cup: cupDone(s, false) })),
     safety: () => { up({ ev: false }); drive('safety', 1); },
     nonav: () => { up({ ev: false }); drive('nonav'); },
     noPrice: () => park((s) => ({ ev: false, filled: true, popup: s.refueled ? null : 'refuelManual' })),
     care: () => park({ ev: false, popup: 'care', washer: true }),
     ev: () => park((s) => ({ ev: !s.ev, popup: null })),
     charge: () => park((s) => ({ ev: true, popup: s.charged ? null : 'charge' })),
+    // 승차감 기록 시연
+    cupDrive: () => { up((s) => ({ ev: false, set: { ...s.set, cup: '켜기' }, cup: { ...s.cup, live: true, level: 100, bonus: 0, counts: CUP_ZERO(), result: null, blocked: null } })); drive('route'); },
+    cupWobble: () => cupHit('wobble'),
+    cupSpill: () => cupHit('spill'),
+    cupEnd: () => park((s) => ({ ev: false, popup: 'tripEnd', cup: cupDone(s, true) })),
     reset: () => setS((s) => ({ ...fresh(), src: s.src, car: s.car, caps: s.caps, restricted: s.restricted, ...(s.restricted ? { mode: 'driving', forced: true } : {}) })),
   };
   return { A, D };
@@ -3239,6 +3406,7 @@ function App() {
     if (!native()) return undefined;
     setS((s) => ({ ...s, caps: HV.caps() || s.caps, car: HV.snapshot() || s.car }));
     const off = HV.on((ev) => vehicleEvent(ev, setS, () => sRef.current));
+    HV.cupEnable(sRef.current.set.cup === '켜기');
     HV.ready();
     return off;
   }, []);
@@ -3303,6 +3471,8 @@ function DemoGroups({ S, D, after }) {
       ${b(D.start, '① 주행 시작', 1)}${b(D.suggest, '② 주유 제안 받기', 1)}${b(D.arrive, '③ 주유 후 정차', 1)}${b(D.tripEnd, '④ 주행 종료', 1)}</div>
     <div className="g"><span className="lbl">다른 상황</span>
       ${b(D.safety, '주행 중 안전 기록')}${b(D.nonav, '경로 없이 주행')}${b(D.noPrice, '유가 정보 없는 주유')}${b(D.care, '소모품 경고')}</div>
+    <div className="g"><span className="lbl">승차감</span>
+      ${b(D.cupDrive, '승차감 기록 주행', 1)}${b(D.cupWobble, '흔들림')}${b(D.cupSpill, '큰 흔들림')}${b(D.cupEnd, '주행 종료', 1)}</div>
     <div className="g"><span className="lbl">차종</span>
       ${b(D.ev, S.ev ? '내연기관차로 전환' : '전기차로 전환')}${b(D.charge, '충전 후 정차')}${b(D.reset, '처음부터')}</div>`;
 }

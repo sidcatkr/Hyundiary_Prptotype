@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.hyundiary.mockup.logic.CoffeeCup
 import com.hyundiary.mockup.logic.FuelMath
 import com.hyundiary.mockup.logic.Gear
 import com.hyundiary.mockup.logic.LevelRiseDetector
@@ -28,6 +29,7 @@ import org.json.JSONObject
  *  safety    안전 운전 기록 1건(decel/speeding/lane/belt)
  *  fuelLow   주행 중 주유가 필요해짐(주행가능거리 < 남은 경로 + 여유)
  *  waypoint  경유지 추가 결과
+ *  cup       승차감 기록(logic/CoffeeCup 판정): start / blocked(안전벨트) / event(판정 1건) / end(주행 기록, 움직이지 않았으면 stage 없음)
  */
 class VehicleHub(context: Context, private val sink: EventSink) :
     CarApiSource.Listener,
@@ -56,6 +58,7 @@ class VehicleHub(context: Context, private val sink: EventSink) :
     private val charge = LevelRiseDetector(minRisePct = 5f, settleMs = 300_000L)
     private val trips = TripTracker()
     private val safety = SafetyMonitor()
+    private val cup = CoffeeCup()
 
     private val sources = linkedMapOf(
         "car" to SourceState.OFF,
@@ -76,6 +79,12 @@ class VehicleHub(context: Context, private val sink: EventSink) :
     private var fuelLowSent = false
     private var addressAsked = false
     private var lastGear = Gear.UNKNOWN
+
+    // 승차감 기록(웹 설정에서 켠다). 판정은 CoffeeCup 로직이 하고 화면에는 결과만 보낸다
+    private var cupEnabled = false
+    private var cupWaitBelt = false
+    private var lastCoachAt = -1L
+    private var nextRestSec = REST_SEC
 
     private val tick = object : Runnable {
         override fun run() {
@@ -109,6 +118,7 @@ class VehicleHub(context: Context, private val sink: EventSink) :
     fun release() = onMain {
         started = false
         main.removeCallbacks(tick)
+        main.removeCallbacks(coach)
         location.stop()
         voice.stop()
         navi.stop()
@@ -150,6 +160,12 @@ class VehicleHub(context: Context, private val sink: EventSink) :
         return true
     }
 
+    /** 승차감 기록 켜기/끄기(웹 설정). 주행 중에 켜면 바로 시작한다. */
+    fun cupEnable(on: Boolean): Boolean {
+        onMain { setCup(SystemClock.elapsedRealtime(), on) }
+        return true
+    }
+
     // ── 연동 대상 콜백(메인 스레드) ──
 
     override fun onCarStatus(status: SourceState, props: Map<String, Boolean>) {
@@ -163,7 +179,8 @@ class VehicleHub(context: Context, private val sink: EventSink) :
         when (what) {
             "speed" -> state.speedKmh?.let { v ->
                 handleTrip(trips.onSpeed(t, v))
-                if (trips.active) safety.onSpeed(t, v).forEach { emitSafety(it) }
+                if (trips.active) safety.onSpeed(t, v).forEach { onSafety(t, it) }
+                if (cup.running) cupEvents(t, cup.onSpeed(t, v))
             }
             "gear" -> onGear(t, state.gear)
             "fuel" -> onFuel(t)
@@ -185,8 +202,15 @@ class VehicleHub(context: Context, private val sink: EventSink) :
                 charge.onLevel(t, soc, state.parked)?.let { emitCharge(it) }
             }
             "turn" -> safety.onTurnSignal(t, state.turnSignal != null && state.turnSignal != "OFF")
-            "steer" -> state.steerDeg?.let { deg -> if (trips.active) safety.onSteering(t, deg)?.let { emitSafety(it) } }
-            "belt" -> state.driverBelt?.let { b -> safety.onBelt(t, b)?.let { if (trips.active) emitSafety(it) } }
+            "steer" -> state.steerDeg?.let { deg ->
+                if (trips.active) safety.onSteering(t, deg)?.let { onSafety(t, it) }
+                if (cup.running) cupEvents(t, cup.onSteering(t, deg))
+            }
+            "belt" -> state.driverBelt?.let { b ->
+                safety.onBelt(t, b)?.let { if (trips.active) emitSafety(it) }
+                if (b && cupWaitBelt && trips.active) startCup(t)
+            }
+            "mode" -> cup.onEcoMode(t, ecoMode())
         }
     }
 
@@ -224,6 +248,15 @@ class VehicleHub(context: Context, private val sink: EventSink) :
         state.speedKmh?.let { handleTrip(trips.onSpeed(t, it)) }
         refuel.onTick(t)?.let { emitRefuel(it) }
         charge.onTick(t)?.let { emitCharge(it) }
+        if (cup.running) {
+            cupEvents(t, cup.onTick(t))
+            // 1시간마다 쉬어 가기를 권한다
+            val sec = trips.current(t)?.sec ?: 0L
+            if (sec >= nextRestSec) {
+                nextRestSec += REST_SEC
+                voice.speak(REST_MSG)
+            }
+        }
         if (trips.active && !fuelLowSent) {
             val remain = state.destRemainM?.let { it / 1000.0 }
             if (FuelMath.needsFuel(state.rangeKm, state.fuelPct, remain)) {
@@ -269,13 +302,104 @@ class VehicleHub(context: Context, private val sink: EventSink) :
                 fuelLowSent = false
                 navi.refresh()
                 emit(JSONObject().put("type", "trip").put("phase", "start"))
+                if (cupEnabled) startCup(ev.t)
             }
             is TripTracker.Event.Ended -> {
+                // 승차감 기록을 먼저 보내야 웹이 주행 종료 팝업에 함께 넣는다
+                endCup(ev.trip.endedAt, ev.trip)
                 emit(JSONObject().put("type", "trip").put("phase", "end").put("trip", tripJson(ev.trip)))
             }
             null -> Unit
         }
     }
+
+    // ── 승차감 기록(CoffeeCup 판정) ──
+
+    private val coach = Runnable { voice.speak(COACH_MSG) }
+
+    private fun setCup(t: Long, on: Boolean) {
+        if (cupEnabled == on) return
+        cupEnabled = on
+        if (on) {
+            if (trips.active) startCup(t)
+        } else if (cup.running || cupWaitBelt) {
+            cupWaitBelt = false
+            cup.stop(t)
+            emit(JSONObject().put("type", "cup").put("phase", "end"))
+        }
+    }
+
+    /** 주행이 시작되면 기록을 시작한다. 운전석 안전벨트를 안 맸으면(false) 맬 때까지 기다린다. 모르면(null) 시작한다. */
+    private fun startCup(t: Long) {
+        if (!cupEnabled || cup.running) return
+        if (state.driverBelt == false) {
+            if (!cupWaitBelt) {
+                cupWaitBelt = true
+                emit(JSONObject().put("type", "cup").put("phase", "blocked").put("reason", "belt"))
+                voice.speak(BELT_MSG)
+            }
+            return
+        }
+        cupWaitBelt = false
+        cup.start(t)
+        cup.onEcoMode(t, ecoMode())
+        state.speedKmh?.let { cup.onSpeed(t, it) }
+        state.steerDeg?.let { cup.onSteering(t, it) }
+        nextRestSec = REST_SEC
+        emit(JSONObject().put("type", "cup").put("phase", "start"))
+    }
+
+    private fun endCup(t: Long, trip: TripTracker.Trip) {
+        val waited = cupWaitBelt
+        cupWaitBelt = false
+        main.removeCallbacks(coach)
+        val st = cup.stop(t)
+        if (st == null) {
+            if (waited) emit(JSONObject().put("type", "cup").put("phase", "end"))
+            return
+        }
+        val o = JSONObject().put("type", "cup").put("phase", "end")
+        // 기어만 바꾸고 움직이지 않았으면 기록을 만들지 않는다
+        if (trip.km >= 0.1) {
+            o.put("stage", JSONObject()
+                .put("level", st.level)
+                .put("bonus", st.bonus)
+                .put("lost", st.lost)
+                .put("km", Math.round(trip.km * 10.0) / 10.0)
+                .put("sec", trip.sec)
+                .put("counts", cupCounts(st.counts)))
+        }
+        emit(o)
+    }
+
+    private fun onSafety(t: Long, r: SafetyMonitor.Record) {
+        emitSafety(r)
+        if (r.kind == SafetyMonitor.Kind.LANE_NO_SIGNAL && cup.running) cup.onLaneChange(t)?.let { cupEvents(t, listOf(it)) }
+    }
+
+    private fun cupEvents(t: Long, list: List<CoffeeCup.Event>) {
+        list.forEach { e ->
+            emit(JSONObject().put("type", "cup").put("phase", "event")
+                .put("kind", e.kind.key)
+                .put("delta", e.delta)
+                .put("level", e.level)
+                .put("bonus", cup.bonus)
+                .put("g", Math.round(e.g * 100.0) / 100.0)
+                .put("counts", cupCounts(cup.counts)))
+            // 주행 중에는 화면을 바꾸지 않는다. 큰 흔들림(SPILL)만 한 문장으로 알려 주고, 너무 자주 말하지 않는다
+            if (e.kind == CoffeeCup.Kind.SPILL && (lastCoachAt < 0 || t - lastCoachAt >= COACH_GAP_MS)) {
+                lastCoachAt = t
+                main.removeCallbacks(coach)
+                main.post(coach)
+            }
+        }
+    }
+
+    private fun cupCounts(c: Map<CoffeeCup.Kind, Int>) = JSONObject().apply {
+        CoffeeCup.Kind.values().forEach { put(it.key, c[it] ?: 0) }
+    }
+
+    private fun ecoMode(): Boolean? = state.drivingMode?.let { it == "ECO" }
 
     private fun emitRefuel(r: LevelRiseDetector.Rise) {
         addressAsked = false
@@ -362,5 +486,10 @@ class VehicleHub(context: Context, private val sink: EventSink) :
         private const val TAG = "HyHub"
         private const val TICK_MS = 1_000L
         private const val DEFAULT_TANK_L = 60.0 // 차량이 탱크 용량을 주지 않을 때(앱 설정 기본값)
+        private const val COACH_GAP_MS = 60_000L
+        private const val REST_SEC = 3_600L
+        private const val COACH_MSG = "급한 가속이나 제동, 핸들 조작이 있었습니다. 천천히 바꿔 주세요."
+        private const val BELT_MSG = "안전벨트를 매 주세요. 매면 승차감 기록을 시작합니다."
+        private const val REST_MSG = "한 시간 운전했습니다. 다음 휴게소에서 쉬어 가세요."
     }
 }

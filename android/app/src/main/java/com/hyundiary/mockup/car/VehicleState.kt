@@ -33,6 +33,7 @@ class VehicleState {
     var turnSignal: String? = null       // TurnSignal OFF / LEFT / RIGHT
     var steerDeg: Float? = null          // SteeringWheel angle (도)
     var driverBelt: Boolean? = null      // Seat ROW_1_LEFT belt buckled
+    var drivingMode: String? = null      // DrivingMode NORMAL / ECO / SPORT (지원하지 않는 차는 null)
 
     // Pleos NaviHelper
     var naviStatus: String? = null       // NavigationStatus
@@ -94,6 +95,7 @@ class VehicleState {
         putOpt("turn", turnSignal)
         putOpt("steerDeg", steerDeg?.let { round1(it) })
         putOpt("belt", driverBelt)
+        putOpt("drivingMode", drivingMode)
         put("restricted", restricted == true)
         putOpt("speedLimit", speedLimitKmh)
         put("route", JSONObject().apply {

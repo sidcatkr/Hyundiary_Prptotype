@@ -38,6 +38,11 @@
       if (!N) return false;
       return call(function () { return N.speak(String(text)); }) === true;
     },
+    // 승차감 기록 켜기/끄기. 앱은 주행을 시작할 때 판정(logic/CoffeeCup)을 시작하고, cup 이벤트로 결과를 보낸다.
+    cupEnable: function (on) {
+      if (!N || !N.cupEnable) return false;
+      return call(function () { return N.cupEnable(!!on); }) === true;
+    },
     _emit: function (ev) {
       if (typeof ev === 'string') ev = parse(ev);
       if (!ev || typeof ev.type !== 'string') return;

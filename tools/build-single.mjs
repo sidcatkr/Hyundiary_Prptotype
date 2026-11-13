@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = join(ROOT, 'web');
 const OUT = join(ROOT, 'dist');
-const MIME = { png: 'image/png', woff2: 'font/woff2', woff: 'font/woff', jpg: 'image/jpeg', svg: 'image/svg+xml' };
+const MIME = { png: 'image/png', woff2: 'font/woff2', woff: 'font/woff', jpg: 'image/jpeg', svg: 'image/svg+xml', wav: 'audio/wav' };
 
 const read = (p) => readFileSync(join(WEB, p), 'utf8');
 const dataUri = (p) => {
@@ -28,8 +28,8 @@ function build(entry, outName) {
   html = html.replace(/<link rel="stylesheet" href="([^"]+)">/g, (m, href) => `<style>\n${inlineCss(href)}\n</style>`);
   html = html.replace(/<script src="([^"]+)"><\/script>/g, (m, src) => {
     let js = read(src);
-    // app.js의 OS 화면 이미지 경로를 data URI로
-    if (src === 'src/app.js') js = js.replace(/'(assets\/img\/[\w.-]+\.png)'/g, (mm, p) => JSON.stringify(dataUri(p)));
+    // app.js의 OS 화면 이미지·커피잔 효과음 경로를 data URI로
+    if (src === 'src/app.js') js = js.replace(/'(assets\/(?:img\/[\w.-]+\.png|sound\/[\w.-]+\.wav))'/g, (mm, p) => JSON.stringify(dataUri(p)));
     return `<script>\n${safeJs(js)}\n</script>`;
   });
   if (/(?:href|src)="(?!data:|https?:)[^"]+"/.test(html)) throw new Error(entry + ': 넣지 못한 로컬 자원이 남았습니다');

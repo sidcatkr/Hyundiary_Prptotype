@@ -28,7 +28,7 @@ try {
   check(await app.evaluate(() => document.fonts.check('24px "Asta Sans"', '가계부')), 'Asta Sans 폰트가 로드되지 않음');
   check((await app.locator('.os-img').count()) === 0, '에뮬 앱 화면에 OS 이미지가 그려짐');
   const stage = app.locator('#stage');
-  for (const m of ['가계부', '통계', '안전 운전', '소모품', '주유소', '설정', '홈']) {
+  for (const m of ['가계부', '통계', '안전 운전', '승차감', '소모품', '주유소', '설정', '홈']) {
     await stage.locator('.menu-item', { hasText: m }).first().click();
     await app.waitForTimeout(450);
   }
@@ -41,6 +41,16 @@ try {
   check((await app.evaluate(() => window.hyBack())) === true, '뒤로 가기로 팝업이 닫히지 않음');
   await app.waitForTimeout(500);
   check((await app.evaluate(() => window.hyBack())) === false, '홈에서 뒤로 가기가 앱을 내보내지 않음');
+  // 승차감 시연: 기록 주행 → 큰 흔들림(주행 화면은 그대로) → 주행 종료 팝업에 승차감 점수
+  for (const step of ['승차감 기록 주행', '큰 흔들림', '주행 종료']) {
+    await app.locator('.dock-fab').click();
+    await app.locator('.dock-panel button', { hasText: new RegExp('^' + step + '$') }).click();
+    await app.waitForTimeout(700);
+    if (step === '큰 흔들림') check((await app.locator('.drv').count()) > 0 && !(await stage.innerText()).includes('큰 흔들림'), '시연 큰 흔들림이 주행 화면에 보임');
+  }
+  check((await stage.innerText()).includes('주행을 마쳤습니다') && (await stage.innerText()).includes('큰 흔들림 1') && (await stage.innerText()).includes('90점'), '시연 주행 종료 팝업에 승차감 점수가 없음');
+  check((await app.evaluate(() => window.hyBack())) === true, '뒤로 가기로 주행 종료 팝업이 닫히지 않음');
+  check((await app.locator('.cupg, .cup-drv').count()) === 0, '커피잔 그림이 남아 있음');
 
   // 2) 브라우저 프리뷰: OS 화면 포함
   const pv = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -62,6 +72,7 @@ try {
       ready: () => { window.__hy.push('ready'); },
       addWaypoint: (j) => { window.__hy.push('wp:' + j); return true; },
       speak: (t) => { window.__hy.push('speak:' + t); return true; },
+      cupEnable: (on) => { window.__hy.push('cup:' + on); return true; },
     };
   });
   await car.goto(base + '/app.html');
@@ -70,6 +81,7 @@ try {
   const text = () => car.locator('#stage').innerText();
   const calls = () => car.evaluate(() => window.__hy.slice());
   check((await calls()).includes('ready'), '브리지 ready가 불리지 않음');
+  check((await calls()).includes('cup:false'), '시작할 때 승차감 기록 설정(꺼짐)을 앱에 알리지 않음');
   const cstage = car.locator('#stage');
   await cstage.locator('.menu-item', { hasText: '설정' }).first().click();
   await car.waitForTimeout(500);
@@ -148,6 +160,45 @@ try {
   await car.waitForTimeout(300);
   await car.getByRole('button', { name: '내연기관차로 전환' }).click();
   await car.waitForTimeout(500);
+  // 승차감 기록(차량 데이터): 켜기 → 앱 판정 이벤트(주행 화면은 그대로) → 주행 종료 팝업에 승차감 점수
+  await cstage.locator('.menu-item', { hasText: '승차감' }).first().click();
+  await car.waitForTimeout(500);
+  await cstage.getByRole('button', { name: '승차감 기록 켜기' }).click();
+  await car.waitForTimeout(300);
+  check((await calls()).includes('cup:true'), '승차감 기록을 켜도 앱에 알리지 않음');
+  await emit({ type: 'trip', phase: 'start' });
+  await emit({ type: 'cup', phase: 'start' });
+  await emit({ type: 'cup', phase: 'event', kind: 'spill', delta: -10, level: 90, bonus: 0, g: 0.52, counts: { wobble: 0, spill: 1, lane: 0, eco: 0 } });
+  await car.waitForTimeout(700);
+  check((await car.locator('.drv').count()) > 0 && !(await text()).includes('큰 흔들림'), '앱의 승차감 판정이 주행 화면에 보임');
+  await emit({ type: 'safety', kind: 'decel', counts: { decel: 1, speeding: 0, lane: 0, belt: 0 } });
+  await emit({ type: 'cup', phase: 'end', stage: { level: 90, bonus: 0, lost: 10, km: 12.3, sec: 900, counts: { wobble: 0, spill: 1, lane: 0, eco: 0 } } });
+  await emit({ type: 'trip', phase: 'end', trip: { km: 12.3, sec: 900, maxKmh: 80, events: { decel: 1, speeding: 0, lane: 0, belt: 0 } } });
+  await car.waitForTimeout(900);
+  check((await text()).includes('주행을 마쳤습니다') && (await text()).includes('큰 흔들림 1') && (await text()).includes('90점'), '정차 후 주행 종료 팝업에 승차감 점수가 없음');
+  await cstage.getByRole('button', { name: '닫기', exact: true }).click();
+  await car.waitForTimeout(500);
+  await cstage.locator('.menu-item', { hasText: '승차감' }).first().click();
+  await car.waitForTimeout(500);
+  check((await text()).includes('12.3 km · 15분 · 큰 흔들림 1'), '승차감 화면의 최근 주행에 앱 기록이 없음');
+  // 안전벨트를 매지 않아 기록하지 못한 주행은 주행 종료 팝업에 그렇게 적는다
+  await emit({ type: 'trip', phase: 'start' });
+  await emit({ type: 'cup', phase: 'blocked', reason: 'belt' });
+  await car.waitForTimeout(300);
+  await emit({ type: 'cup', phase: 'end' });
+  await emit({ type: 'trip', phase: 'end', trip: { km: 3.1, sec: 400, maxKmh: 40, events: { decel: 0, speeding: 0, lane: 0, belt: 1 } } });
+  await car.waitForTimeout(900);
+  check((await text()).includes('안전벨트를 매지 않아 기록하지 않았습니다'), '벨트 없이 끝난 주행의 승차감 안내가 팝업에 없음');
+  await cstage.getByRole('button', { name: '닫기', exact: true }).click();
+  await car.waitForTimeout(500);
+  // 움직이지 않고 끝난 주행은 팝업 없이 닫힌다
+  await emit({ type: 'trip', phase: 'start' });
+  await emit({ type: 'cup', phase: 'start' });
+  await car.waitForTimeout(500);
+  await emit({ type: 'cup', phase: 'end' });
+  await emit({ type: 'trip', phase: 'end', trip: { km: 0, sec: 30, maxKmh: 0, events: { decel: 0, speeding: 0, lane: 0, belt: 0 } } });
+  await car.waitForTimeout(700);
+  check((await car.locator('.scrim').count()) === 0, '움직이지 않은 주행에 팝업이 뜸');
   // 시연 모드여도 주행 규제가 켜지면 주행 화면으로 바뀌고, 꺼지면 돌아온다
   await cstage.locator('.menu-item', { hasText: '설정' }).first().click();
   await car.waitForTimeout(500);

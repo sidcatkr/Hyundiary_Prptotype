@@ -74,11 +74,11 @@ android {
 
 dependencies {
     // Pleos Connect SDK (https://nexus-playground.pleos.ai). 버전은 Pleos 개발 문서와 같다.
-    implementation 'ai.pleos.playground:Vehicle:2.3.2'        // 주행거리, 배터리, 방향지시등, 핸들 각도, 안전벨트, 경고등
+    implementation 'ai.pleos.playground:Vehicle:2.3.2'        // 주행거리, 배터리, 방향지시등, 핸들 각도, 안전벨트, 주행 모드
     implementation 'ai.pleos.playground:NaviHelper:3.0.5'     // 목적지·남은 거리, 제한속도, 주소, 경유지 추가
-    implementation 'ai.pleos.playground:TextToSpeech:3.3.1'   // 주유 추천 음성 안내(ON_DEVICE)
+    implementation 'ai.pleos.playground:TextToSpeech:3.3.1'   // 주유 추천·승차감 음성 안내(ON_DEVICE)
     implementation 'ai.pleos.playground:FusedLocation:1.1.3'  // 현재 위치
 
-    // 판단 로직(주유 감지, 주행, 안전 운전) 단위 테스트: ./gradlew testDebugUnitTest
+    // 판단 로직(주유 감지, 주행, 안전 운전, 승차감) 단위 테스트: ./gradlew testDebugUnitTest
     testImplementation 'junit:junit:4.13.2'
 }

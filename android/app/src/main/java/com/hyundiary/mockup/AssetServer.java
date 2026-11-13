@@ -32,6 +32,7 @@ final class AssetServer {
         TYPES.put("webp", "image/webp");
         TYPES.put("woff2", "font/woff2");
         TYPES.put("woff", "font/woff");
+        TYPES.put("wav", "audio/wav");
     }
 
     private final AssetManager assets;

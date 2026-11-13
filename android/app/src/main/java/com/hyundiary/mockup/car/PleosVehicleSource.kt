@@ -4,7 +4,9 @@ import ai.pleos.playground.vehicle.Vehicle
 import ai.pleos.playground.vehicle.api.model.area.SeatArea
 import ai.pleos.playground.vehicle.constant.area.SeatValue
 import ai.pleos.playground.vehicle.constant.area.TurnSignalValue
+import ai.pleos.playground.vehicle.constant.control.DrivingModeType
 import ai.pleos.playground.vehicle.listener.DistanceDrivenListener
+import ai.pleos.playground.vehicle.listener.DrivingModeStateListener
 import ai.pleos.playground.vehicle.listener.EvBatteryStateOfChargeListener
 import ai.pleos.playground.vehicle.listener.SeatBeltBuckledStateListener
 import ai.pleos.playground.vehicle.listener.SteeringWheelAngleListener
@@ -21,7 +23,13 @@ import android.util.Log
  * - EvBattery StateOfCharge     → 전기차 배터리 %, 충전 감지 (pleos CAR_ENERGY)
  * - TurnSignal                  → 깜빡이 없이 차로 변경 판단 (pleos CAR_LIGHTS)
  * - SteeringWheel angle         → 차로 변경 추정 (pleos CAR_DRIVE)
- * - Seat belt (운전석 ROW_1_LEFT) → 안전벨트 미착용 주행 (pleos CAR_SEATS)
+ * - Seat belt (운전석 ROW_1_LEFT) → 안전벨트 미착용 주행, 승차감 기록 시작 조건 (pleos CAR_SEATS)
+ * - DrivingMode                 → 승차감 정속 보너스를 에코 모드에서만 센다 (pleos CAR_DRIVE)
+ *   에뮬레이터에는 이 값이 없다(ERROR_NOT_SUPPORTED_PROPERTY). 없으면 정속만으로 센다.
+ *
+ * 브레이크 페달(Brake)은 밟았는지 여부(Boolean)만 줘서 흔들림 계산에 쓰지 않는다(차속 변화율로 계산).
+ * Safety의 안전벨트 경고(hasSeatBeltNotBuckledWarning)와 Odometer의 Trip 거리·시간은 에뮬레이터에 없어서
+ * 안전벨트는 Seat, 주행 거리·시간은 차속 적분([com.hyundiary.mockup.logic.TripTracker])으로 대신한다.
  *
  * 경고등(Safety Telltales)은 쓰지 않는다. 에뮬레이터 실측에서 CAR_SAFETY만으로는 조회가 거부되고
  * (PRIVATE_CAR_SAFETY 필요), SDK의 경고등 종류에 와셔액이 없어 소모품 화면에 쓸 수 없었다.
@@ -94,6 +102,18 @@ class PleosVehicleSource(
         override fun onFailed(e: Exception) = onMain { fail("steering", e) }
     }
 
+    private val modeListener = object : DrivingModeStateListener {
+        override fun onDrivingModeStateUpdated(value: DrivingModeType?) = onMain {
+            if (value != null) {
+                state.drivingMode = value.name
+                ok("drivingMode")
+                listener.onVehicleChanged("mode")
+            }
+        }
+
+        override fun onFailed(e: Exception) = onMain { fail("drivingMode", e) }
+    }
+
     private val beltListener = object : SeatBeltBuckledStateListener {
         override fun onSeatBeltBuckledStateUpdated(value: Boolean?) = onMain {
             if (value != null) {
@@ -156,10 +176,18 @@ class PleosVehicleSource(
                 seat.getCurrentSeatBeltBuckledState(driverSeat, { x -> onMain { done(); if (x != null) { state.driverBelt = x; listener.onVehicleChanged("belt") } } }, { e -> onMain { failed(e) } })
             }
         }
+        guard("drivingMode") {
+            val dm = v.getDrivingMode()
+            dm.registerDrivingModeState(modeListener)
+            watch("drivingMode") { done, failed ->
+                dm.getCurrentDrivingModeState({ x -> onMain { done(); if (x != null) { state.drivingMode = x.name; listener.onVehicleChanged("mode") } } }, { e -> onMain { failed(e) } })
+            }
+        }
     }
 
     fun stop() {
         val v = vehicle ?: return
+        quiet { v.getDrivingMode().unregisterDrivingModeState(modeListener) }
         // 콜백이 남아 있는 상태에서 release하지 않도록 구독부터 푼다
         quiet { v.getOdometer().unregisterDistanceDriven(odoListener) }
         quiet { v.getEvBattery().unregisterEvBatteryStateOfCharge(socListener) }

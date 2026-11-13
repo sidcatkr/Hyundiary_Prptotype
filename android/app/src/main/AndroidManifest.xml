@@ -15,7 +15,7 @@
     <uses-permission android:name="android.car.permission.CAR_SPEED" />      <!-- PERF_VEHICLE_SPEED -->
     <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" /> <!-- GEAR_SELECTION -->
     <!-- Pleos Vehicle SDK -->
-    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />        <!-- Odometer, SteeringWheel -->
+    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />        <!-- Odometer, SteeringWheel, DrivingMode -->
     <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />       <!-- EvBattery -->
     <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />       <!-- TurnSignal -->
     <uses-permission android:name="pleos.car.permission.CAR_SEATS" />        <!-- 안전벨트 -->
