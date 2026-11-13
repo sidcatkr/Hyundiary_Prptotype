@@ -1,8 +1,8 @@
 package com.hyundiary.mockup.car
 
 import ai.pleos.playground.location.fused.FusedLocation
-import ai.pleos.playground.location.fused.FusedLocationListener
-import ai.pleos.playground.location.fused.LocationData
+import ai.pleos.playground.location.fused.listener.FusedLocationListener
+import ai.pleos.playground.location.fused.model.LocationData
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
