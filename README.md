@@ -7,7 +7,11 @@
 - 앱 이름: Hyundiary (패키지 `com.hyundiary.mockup`)
 - 한 줄 소개: 주유를 자동으로 가계부에 기록하고, 경로 위 주유소 추천, 소비 습관 분석, 안전 운전 기록을 차량 화면에서 보여 주는 Pleos Connect 앱의 프로토타입입니다.
 
-이 저장소의 앱은 화면과 흐름을 보여 주는 프로토타입입니다. 모든 수치와 주유소는 예시 값이며, 차량 데이터(Pleos Vehicle SDK, AAOS Car API)와 외부 API에는 아직 연결되어 있지 않습니다. 주행·정차 상태는 앱 안의 시연 버튼으로 바꿉니다.
+이 저장소의 앱은 화면은 목업이고 내부 코드는 실제 차량 API에 연결된 프로토타입입니다.
+
+- 화면: 모든 수치와 주유소는 예시 값입니다. 기본 상태인 "시연" 모드에서는 앱 안의 시연 버튼으로 주행·정차 상태를 바꿉니다.
+- 내부 코드: AAOS Car API와 Pleos Connect SDK(Vehicle, NaviHelper, TextToSpeech, FusedLocation)를 호출합니다. 설정에서 "차량" 모드를 고르면 연료량 변화로 주유를 감지하고, 기어로 주행 시작·종료를 판단하고, 안전 운전 기록을 남기고, 주유소를 내비게이션 경유지로 넣습니다(7.2절).
+- 유가 정보(오피넷)와 주유소 검색은 아직 연동하지 않았습니다. 차량 모드에서도 단가와 주유소는 예시 값을 씁니다.
 
 ## 2. APK 파일 위치
 
@@ -36,16 +40,29 @@ adb shell am start --user 10 -n com.hyundiary.mockup/.MainActivity
 - 정차 중에는 화면을 직접 눌러 가계부 달력, 통계의 소비 습관, 주유소 정렬, 안전 운전 기록을 볼 수 있습니다.
 - 뒤로 가기(CCP 포함)는 영상, 팝업, 하위 화면 순으로 닫고, 홈에서는 앱을 뒤로 보냅니다(`moveTaskToBack`).
 
-### 3.3 소스에서 빌드
+### 3.3 차량 데이터 모드
+
+- 처음 실행하면 차속·연료·위치 권한을 묻습니다. 허용해야 해당 값을 받습니다.
+- 설정 > 화면 데이터에서 "차량"을 고르면 화면이 차량 값으로 움직입니다. 설정 > 연결에서 연동 대상별 상태(연결됨, 권한 필요, 지원 안 함, 응답 없음)와 차량에서 받은 값을 확인할 수 있습니다.
+- 에뮬레이터 Virtual Console로 확인하는 방법
+  - 주유 감지: 기어 P에서 연료량을 5% 넘게 올리면 약 10초 뒤 "주유를 기록할까요?" 팝업이 뜹니다. 주유량은 연료량 변화와 탱크 용량으로 계산합니다.
+  - 주행 시작·종료: 기어를 P에서 D로 바꾸면 주행 화면, 다시 P로 바꾸면 주행 종료 팝업이 뜹니다.
+  - 주행 중 기록: 차속을 올리면 주행 거리가 쌓이고, 급감속·제한속도 초과·깜빡이 없는 차로 변경·안전벨트 미착용을 기록합니다. 주행가능거리가 남은 경로보다 짧아지면 주유 추천을 띄우고 음성으로 알립니다.
+- 주행 규제(CarUxRestrictions)가 켜지면 시연 모드여도 입력 없는 주행 화면으로 바뀌고, 팝업·영상·입력 화면을 막습니다. 규제가 풀리면 정차 화면으로 돌아옵니다.
+
+### 3.4 소스에서 빌드
 
 ```bash
 cd android
 ./gradlew assembleRelease     # release APK: app/build/outputs/apk/release/
 ./gradlew installDebug        # debug 빌드를 에뮬레이터에 바로 설치
+./gradlew testDebugUnitTest   # 판단 로직 단위 테스트
 ```
 
 - JDK 17로 빌드합니다. Android Studio에 내장된 최신 JBR(Java 25)은 Gradle 8.10.2가 지원하지 않으므로, Android Studio에서는 Settings > Build, Execution, Deployment > Build Tools > Gradle > Gradle JDK를 17로 지정하고, 터미널에서는 `JAVA_HOME`을 JDK 17로 지정합니다.
 - 터미널에서만 빌드할 때는 `ANDROID_HOME`을 지정하거나 `android/local.properties`에 `sdk.dir`을 적습니다. Android Studio로 열면 자동으로 만들어집니다.
+- Pleos Connect SDK는 Pleos Maven 저장소(`https://nexus-playground.pleos.ai/repository/maven-releases/`)에서 받습니다. 처음 빌드할 때 인터넷 연결이 필요합니다.
+- AAOS Car API는 Android SDK의 `platforms/android-35/optional/android.car.jar`를 씁니다(`useLibrary 'android.car'`).
 - release 서명 키는 저장소에 포함하지 않습니다. `android/keystore.properties`(Git 제외 대상)에 아래 항목을 적으면 release 빌드가 그 키로 서명되고, 파일이 없으면 서명되지 않은 APK가 만들어집니다.
 
 ```properties
@@ -57,13 +74,14 @@ keyPassword=...
 
 - `web/` 폴더가 그대로 APK assets로 들어갑니다. 웹 소스를 고친 뒤 다시 빌드하면 반영됩니다.
 
-### 3.4 브라우저 프리뷰(참고)
+### 3.5 브라우저 프리뷰(참고)
 
 같은 화면을 Pleos OS 화면(1920×1080) 안에 넣어 브라우저에서 볼 수 있습니다.
 
 - `dist/hyundiary-preview.html`을 브라우저로 엽니다(인터넷 불필요).
 - 소스를 고치면서 보려면 Node.js 18 이상에서 `npm start`를 실행하고 `http://127.0.0.1:5173/`(OS 화면 포함) 또는 `/app.html`(앱 창만)을 엽니다.
-- 단일 파일 다시 만들기: `npm run build`. 동작 확인: `npm install`, `npx playwright install chromium` 후 `npm test`.
+- 브라우저에는 차량 연동이 없으므로 시연 모드로만 동작합니다.
+- 단일 파일 다시 만들기: `npm run build`. 동작 확인: `npm install`, `npx playwright install chromium` 후 `npm test`. 차량 모드 흐름은 앱 브리지를 흉내 내어 함께 점검합니다.
 
 ## 4. 테스트 환경 및 필요한 설정
 
@@ -74,17 +92,19 @@ keyPassword=...
 | 개발·테스트 PC | MacBook Pro (macOS) |
 | IDE | Android Studio |
 | JDK | Eclipse Temurin 17 |
-| 빌드 도구 | Android Gradle Plugin 8.8.2, Gradle 8.10.2(wrapper 포함) |
+| 빌드 도구 | Android Gradle Plugin 8.8.2, Kotlin 2.0.21, Gradle 8.10.2(wrapper 포함) |
 | Android SDK | compileSdk 35, targetSdk 35, minSdk 28 |
-| 언어 | Java 17(앱 셸), JavaScript(React 18.3.1 + htm 3.1.1, 화면) |
+| 언어 | Kotlin(차량 연동·판단 로직), Java 17(앱 셸), JavaScript(React 18.3.1 + htm 3.1.1, 화면) |
+| 차량 API | AAOS Car API(`android.car`), Pleos Vehicle 2.3.2, NaviHelper 3.0.5, TextToSpeech 3.3.1, FusedLocation 1.1.3 |
 | 실행 환경 | Pleos Connect 에뮬레이터 v2.1.0(5장 참고) |
 | WebView | 에뮬레이터 내장 `ai.pleos.android.webview` 131.0.6752.0 |
 
 ### 4.2 필요한 설정
 
-- 권한: 없음. INTERNET 권한도 쓰지 않으며, 화면 자원은 모두 APK 안에 있습니다.
-- 네트워크, 로그인, 계정 설정: 필요 없습니다.
-- 차량 상태: 정차 상태에서 실행합니다. 앱이 `distractionOptimized`를 선언하지 않았으므로 에뮬레이터의 주행 규제가 켜져 있으면 앱이 가려집니다. 주행 장면은 앱 안의 시연 버튼으로 보여 줍니다.
+- 권한: 실제로 호출하는 API의 권한만 선언합니다(7.3절). 차속(`android.car.permission.CAR_SPEED`), 연료(`android.car.permission.CAR_ENERGY`), 위치(`pleos.car.permission.FUSED_LOCATION`)는 처음 실행할 때 사용자 동의를 받습니다.
+- 네트워크: 실행 중에는 필요 없습니다. 화면 자원은 모두 APK 안에 있고, 음성 안내는 ON_DEVICE 모드라 INTERNET 권한을 두지 않습니다.
+- 로그인, 계정, Pleos 앱 등록 정보(Client ID/Secret): 필요 없습니다.
+- 차량 상태: 정차·주행 모두 실행할 수 있습니다. `distractionOptimized`를 선언했으며, 주행 규제 중에는 화면이 주행 화면으로 바뀝니다.
 - 에뮬레이터: AVD `Pleos_Connect_v2.1.0`을 콜드 부트(`-no-snapshot`)로 켜고 부팅이 끝난 뒤 설치합니다.
 
 ## 5. 개발에 사용한 Pleos Connect 에뮬레이터 버전과 화면 규격
@@ -104,10 +124,14 @@ keyPassword=...
 | 경로 | 내용 |
 |---|---|
 | `apk/` | 제출용 release APK |
-| `android/` | 에뮬레이터 앱(Android Gradle 프로젝트, Java) |
+| `android/` | 에뮬레이터 앱(Android Gradle 프로젝트, Kotlin·Java) |
+| `android/.../mockup/car/` | 차량 연동: `VehicleHub`(중심), `CarApiSource`, `PleosVehicleSource`, `NaviSource`, `VoiceGuide`, `LocationSource` |
+| `android/.../mockup/logic/` | 판단 로직: 주유·충전 감지, 주행 시작·종료, 안전 운전 기록, 주유 제안(단위 테스트는 `android/app/src/test/`) |
+| `android/.../mockup/NativeBridge.kt` | 웹 화면과 앱 사이의 브리지(`window.HyundiaryNative`) |
 | `web/app.html` | 앱 화면 진입점(앱 창만, 시연 버튼 포함) |
 | `web/index.html` | 브라우저 프리뷰 진입점(OS 화면 포함) |
 | `web/src/app.js` | 화면과 동작 전체(React 18 + htm, 빌드 단계 없음) |
+| `web/src/native.js` | 차량 연동 계층(`window.HyVehicle`). 브라우저에서는 연동 없이 시연 모드로 동작 |
 | `web/src/style.css` | 스타일(Pleos OS 라이트 테마 기준) |
 | `web/src/icons.js` | Pleos 아이콘 경로 모음 |
 | `web/assets/img/` | 브라우저 프리뷰용 OS 화면 캡처(에뮬레이터 화면) |
@@ -117,14 +141,67 @@ keyPassword=...
 
 ## 7. 구현 메모
 
+### 7.1 앱 셸
+
 - 화면 맞춤: 1280×907 화면을 앱 창에 맞춰 가운데 정렬합니다. 창 크기나 방향이 바뀌어도 WebView를 다시 만들지 않습니다(`configChanges`).
 - 자원 제공: APK assets를 `https://appassets.androidplatform.net/` 주소로 내어 줍니다(`AssetServer`). `file://` 접근은 열지 않으며, 그 밖의 주소는 모두 차단합니다.
 - WebView 보안: 파일·콘텐츠 접근 차단, 혼합 콘텐츠 차단, 앱 밖 주소로 이동 차단, 원격 디버깅은 debug 빌드에서만 켭니다. release 빌드는 `debuggable false`입니다.
-- 생명주기: 화면에서 사라지면 WebView 타이머(주행 시뮬레이션 포함)를 멈추고, 렌더러가 비정상 종료되면 WebView를 새로 만듭니다.
+- 생명주기: 화면에서 사라지면 WebView 타이머(주행 시뮬레이션 포함)를 멈추고, 렌더러가 비정상 종료되면 WebView를 새로 만듭니다. 차량 연동은 Activity가 살아 있는 동안 계속 값을 받습니다.
+
+### 7.2 차량 연동 구조
+
+```
+AAOS Car API ─┐
+Pleos Vehicle ─┤
+NaviHelper ────┼─> VehicleHub ─ 판단 로직(logic/) ─> 이벤트(JSON) ─> window.HyVehicle ─> 화면 상태
+TextToSpeech <─┤        ^                                                    │
+FusedLocation ─┘        └──────── NativeBridge(경유지 추가, 음성 안내) <──────┘
+```
+
+| 화면 기능 | 사용하는 API | 판단 |
+|---|---|---|
+| 연료 %, 주행가능거리 | Car API `FUEL_LEVEL`, `INFO_FUEL_CAPACITY`, `RANGE_REMAINING` | 주행가능거리가 0 이하로 오면 연료량 × 연비(12.4 km/L)로 추정 |
+| 주유 자동 기록 | 위 연료 값, NaviHelper `getCurrentLocationInfo`(주소), FusedLocation(위치) | 기어 P에서 연료가 5%p 넘게 늘고 10초 동안 더 늘지 않거나 출발하면 주유 1건. 주유량 = 늘어난 % × 탱크 용량 |
+| 충전 기록(전기차) | Vehicle `EvBattery` 잔량, Car API `INFO_EV_BATTERY_CAPACITY` | 정차 중 잔량이 5%p 넘게 늘고 5분 동안 그대로이거나 출발하면 충전 1건 |
+| 주행 시작·종료, 주행 거리 | Car API `GEAR_SELECTION`, `PERF_VEHICLE_SPEED`, Vehicle `Odometer` | P가 아니면 주행, P로 돌아오면 종료. 거리는 누적 주행거리 차이, 누적 주행거리가 움직이지 않으면 차속 적분 |
+| 주유 추천·음성 안내 | NaviHelper 목적지·남은 거리, TextToSpeech(ON_DEVICE) | 주행가능거리 < 남은 거리 + 50 km(경로 없으면 100 km)면 주유 추천을 띄우고 한 문장으로 안내 |
+| 경유지 추가 | NaviHelper `addWaypoint` | 추천 주유소를 첫 번째 경유지로 넣음 |
+| 안전 운전 기록 | 차속, NaviHelper 제한속도, Vehicle `TurnSignal`·`SteeringWheel`·운전석 안전벨트 | 급감속(2초에 30 km/h 넘게), 제한속도 +10 km/h 3초 넘게, 40 km/h 이상에서 깜빡이 없이 핸들을 6° 넘게 0.8~5초 돌렸다 되돌림, 벨트 없이 10 km/h 이상 5초 |
+| 소모품 경고 | Vehicle `Safety` 경고등(Telltales) | 정차할 때마다 켜진 경고등을 읽어 와셔액 경고를 표시 |
+| 주행 중 화면 제한 | Car API `CarUxRestrictionsManager` | 규제 중에는 주행 화면만 보이고 팝업·영상·입력을 막음 |
+
+- 모든 SDK 콜백은 메인 스레드로 옮겨 처리하고, Vehicle SDK 조회에는 3초 타임아웃을 둡니다(binder 오류 때 콜백이 오지 않을 수 있음).
+- 연동 대상 하나가 실패해도 나머지는 계속 동작하며, 실패한 기능은 설정 > 연결에 상태로 표시합니다. 차량 API가 없는 기기에서는 시연 모드로만 동작합니다.
+- 판단 로직(`logic/`)은 Android에 의존하지 않는 Kotlin 코드이며 단위 테스트로 기준을 검증합니다.
+
+### 7.3 선언한 권한
+
+| 권한 | 용도 | 동의 |
+|---|---|---|
+| `android.car.permission.CAR_ENERGY` | `FUEL_LEVEL`, `RANGE_REMAINING` | 실행 중 |
+| `android.car.permission.CAR_SPEED` | `PERF_VEHICLE_SPEED` | 실행 중 |
+| `android.car.permission.CAR_INFO` | 탱크·배터리 용량 | 설치 시 |
+| `android.car.permission.CAR_POWERTRAIN` | `GEAR_SELECTION` | 설치 시 |
+| `pleos.car.permission.CAR_DRIVE` | Odometer, SteeringWheel | 설치 시 |
+| `pleos.car.permission.CAR_ENERGY` | EvBattery | 설치 시 |
+| `pleos.car.permission.CAR_LIGHTS` | TurnSignal | 설치 시 |
+| `pleos.car.permission.CAR_SEATS` | 안전벨트 | 설치 시 |
+| `pleos.car.permission.CAR_SAFETY` | 경고등 | 설치 시 |
+| `pleos.car.permission.NAVI_ROUTE` | 목적지·주행 정보, 현재 위치 주소 | 설치 시 |
+| `pleos.car.permission.NAVI_ROUTE_SEARCH` | 경유지 추가 | 설치 시 |
+| `pleos.car.permission.TTS_SERVICE` | 음성 안내 | 설치 시 |
+| `pleos.car.permission.FUSED_LOCATION` | 현재 위치 | 실행 중 |
+
+TextToSpeech SDK가 합쳐 넣는 `android.permission.INTERNET`은 매니페스트에서 뺍니다(`tools:node="remove"`).
 
 ## 8. 제약과 주의사항
 
-- 프로토타입입니다. 차량 데이터, 유가 API, 내비게이션 연동은 없습니다.
+- 화면은 목업입니다. 수치·주유소·단가는 예시 값이며, 유가 API(오피넷)와 주유소 검색은 연동하지 않았습니다. 차량 모드에서도 단가는 1,689원/L(충전 347원/kWh) 예시 값을 씁니다.
+- 주유소 좌표는 경유지 추가를 보여 주기 위한 예시 좌표입니다.
+- 연료 %는 Pleos Vehicle SDK `Fuel`이 에뮬레이터에서 값을 주지 않아 AAOS Car API(`FUEL_LEVEL`)로 받습니다. 에뮬레이터의 `RANGE_REMAINING`은 0이라 주행가능거리는 추정값입니다.
+- 에뮬레이터의 누적 주행거리 조회 값은 0이라, 주행 거리는 차속을 적분해서 구합니다.
+- NaviHelper의 남은 거리 단위는 문서에 없어 미터로 처리했습니다.
+- 차량 연동은 앱(Activity)이 실행 중일 때만 동작합니다. 앱이 꺼진 동안의 주유 감지는 포그라운드 서비스가 필요하며 아직 만들지 않았습니다.
 - portrait(한 window) 전용 화면은 아직 없습니다. landscape 화면을 줄여서 보여 줍니다.
 - 달력 요일은 2025년 배치(11월 9일 일요일)를 따릅니다.
 
@@ -135,5 +212,8 @@ keyPassword=...
 | React, ReactDOM | 18.3.1 | MIT | `web/vendor/LICENSE-react*.txt` |
 | htm | 3.1.1 | Apache-2.0 | `web/vendor/LICENSE-htm.txt` |
 | Asta Sans | 1.000 | SIL Open Font License 1.1 | `web/vendor/fonts/OFL.txt` |
+| Kotlin 표준 라이브러리 | 2.0.21 | Apache-2.0 | Gradle 의존성 |
+
+Pleos Connect SDK(Vehicle, NaviHelper, TextToSpeech, FusedLocation)는 Pleos Playground에서 배포하는 SDK로, 저장소에는 포함하지 않고 빌드할 때 Pleos Maven 저장소에서 받습니다.
 
 `web/assets/img/`의 이미지는 Pleos Connect 에뮬레이터 화면을 캡처한 것으로, 브라우저 프리뷰에서 OS 화면을 보여 주는 용도로만 씁니다.
